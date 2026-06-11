@@ -1,0 +1,31 @@
+# Python Environments
+font_env/
+env/
+venv/
+__pycache__/
+*.pyc
+
+# Massive Datasets & Fonts (Do not upload to GitHub!)
+synthetic_dataset/
+ttf_files/
+new_fonts/
+
+# PyTorch Models & Weights
+*.pth
+best_metric_model.pth
+poc_metric_model.pth
+
+# FAISS Databases & CSV Metadata
+*.index
+*.csv
+!requirements.txt
+
+# Generated Output Images
+visual_result.png
+Screenshot*.png
+
+# IDE / OS Files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
