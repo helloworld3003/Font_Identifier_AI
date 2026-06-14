@@ -4,11 +4,18 @@ env/
 venv/
 __pycache__/
 *.pyc
+missing_family_fonts.txt
+process_fonts.py
+ttf_extractor.py
 
 # Massive Datasets & Fonts (Do not upload to GitHub!)
 synthetic_dataset/
 ttf_files/
 new_fonts/
+pre_fonts/
+fonts/
+extras/
+
 
 # PyTorch Models & Weights
 *.pth

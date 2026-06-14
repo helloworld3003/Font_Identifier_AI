@@ -1,0 +1,10 @@
+torch
+torchvision
+pillow
+albumentations
+pytorch-metric-learning
+fonttools
+faiss-cpu
+numpy
+pandas
+tqdm

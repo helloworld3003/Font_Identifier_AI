@@ -1,11 +1,6 @@
-.\font_env\Scripts\python phase4_inference.py "E:\New folder\coding_arc\font_identifier\Screenshot 2026-06-10 231742.png"
-python train_production.py --chunk_size 10 --save_name best_metric_model.pth
+Next Steps: You can now zip the entire Font_Identifier_AI folder. When you extract it on your friend's laptop:
 
-python train_production.py --chunk_size 10 --resume_from best_metric_model.pth --save_name best_metric_model.pth
-
-
-Delete/Ignore: Do NOT copy poc_metric_model.pth, local_test_fonts.csv, faiss_mapping.csv, or font_embeddings.index.
-Start Training: python train_production.py --chunk_size 1000 --save_name best_metric_model.pth
-Repeat step 2 until the script says "All fonts have been trained!"
-Index the DB: python phase3_database_indexing.py
-Ready for Production Inference!
+Run pip install -r requirements.txt.
+Run python train_virtual_epochs.py.
+Once best_model.pth is saved, run python build_index.py.
+Evaluate with python inference.py image.jpg 100,100,200,200. 
