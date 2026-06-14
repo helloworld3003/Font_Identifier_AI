@@ -1,5 +1,7 @@
 Next Steps: You can now zip the entire Font_Identifier_AI folder. When you extract it on your friend's laptop:
 
+python -m venv font_env
+font_env\Scripts\activate
 Run pip install -r requirements.txt.
 Run python train_virtual_epochs.py.
 Once best_model.pth is saved, run python build_index.py.

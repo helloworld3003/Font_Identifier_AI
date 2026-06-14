@@ -4,17 +4,18 @@ import string
 import logging
 from pathlib import Path
 
+import cv2
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader, Sampler
-from torchvision.models import resnet50, ResNet50_Weights
 import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader, Sampler
 
-from PIL import Image, ImageDraw, ImageFont
 import numpy as np
+import timm
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+from PIL import Image, ImageDraw, ImageFont
 
 from pytorch_metric_learning import losses, miners
 
@@ -22,21 +23,45 @@ from pytorch_metric_learning import losses, miners
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Hardcoded Hardware Constraints & Hyperparameters
-TTF_DIR = "ttf_files" # The directory containing 300k sanitized TTF files
-BATCH_SIZE = 64       # Hardcoded to prevent OOM on 8GB RTX 5050
-M_PER_CLASS = 4       # Number of instances per class per batch (for BatchHardMiner)
+TTF_DIR = "ttf_files"
+BATCH_SIZE = 64
+M_PER_CLASS = 4
 EMBEDDING_SIZE = 256
 VIRTUAL_EPOCH_BATCHES = 10000
 MAX_EPOCHS = 50
 LEARNING_RATE = 1e-4
-PATIENCE = 5          # Early stopping patience
+PATIENCE = 5
+
+# ==========================================
+# 1. TRAIN/TEST SYMMETRY AUGMENTATION
+# ==========================================
+def simulate_adaptive_threshold(image, **kwargs):
+    """
+    Simulates OpenCV adaptive thresholding during training 
+    so the model is invariant to jagged edges and binary masking.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    block_size = np.random.choice([7, 11, 15, 19])
+    binary = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY, int(block_size), 2
+    )
+    return cv2.cvtColor(binary, cv2.COLOR_GRAY2RGB)
+
+def get_train_transforms():
+    return A.Compose([
+        A.Rotate(limit=8, p=0.4),
+        A.Perspective(scale=(0.05, 0.09), p=0.3),
+        A.ImageCompression(quality_lower=50, quality_upper=95, p=0.4),
+        A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
+        A.GaussianBlur(blur_limit=(3, 5), p=0.3),
+        A.Lambda(image=simulate_adaptive_threshold, p=0.4),
+        A.InvertImg(p=0.2), # Handles white-on-black text styles
+        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ToTensorV2()
+    ])
 
 class VirtualEpochBatchSampler(Sampler):
-    """
-    Ensures each batch of size BATCH_SIZE contains M_PER_CLASS instances of the same class (font).
-    Yields strictly VIRTUAL_EPOCH_BATCHES batches per epoch.
-    """
     def __init__(self, num_classes, batch_size, m_per_class, num_batches):
         self.num_classes = num_classes
         self.batch_size = batch_size
@@ -49,7 +74,6 @@ class VirtualEpochBatchSampler(Sampler):
             classes = np.random.choice(self.num_classes, self.classes_per_batch, replace=False)
             batch = []
             for c in classes:
-                # Append the class index 'm_per_class' times
                 batch.extend([c] * self.m_per_class)
             yield batch
 
@@ -57,14 +81,10 @@ class VirtualEpochBatchSampler(Sampler):
         return self.num_batches
 
 class DynamicFontDataset(Dataset):
-    """
-    Loads a TTF into RAM, renders a random alphanumeric string.
-    Applies Albumentations (noise, blur, rotation) dynamically.
-    """
     def __init__(self, ttf_dir, transform=None):
         self.ttf_files = list(Path(ttf_dir).rglob("*.ttf"))
         if len(self.ttf_files) == 0:
-            raise ValueError(f"No TTF files found in {ttf_dir}. Please check TTF_DIR.")
+            raise ValueError(f"No TTF files found in {ttf_dir}")
         self.transform = transform
         logger.info(f"Loaded {len(self.ttf_files)} unique font files into the dataset.")
 
@@ -80,8 +100,6 @@ class DynamicFontDataset(Dataset):
         
         try:
             text = self.generate_random_string(random.randint(3, 8))
-            
-            # Dynamic RAM Rendering
             font_size = random.randint(40, 90)
             font = ImageFont.truetype(str(ttf_path), font_size)
             
@@ -98,7 +116,6 @@ class DynamicFontDataset(Dataset):
             
             draw.text((x, y), text, font=font, fill="black")
         except Exception:
-            # Fallback to empty canvas if rendering fails to avoid crashing dataloader
             image = Image.new("RGB", (224, 224), "white")
             
         image_np = np.array(image)
@@ -111,40 +128,32 @@ class DynamicFontDataset(Dataset):
 
         return image_tensor, idx
 
-class FontEmbeddingModel(nn.Module):
-    def __init__(self, embedding_size=256):
-        super().__init__()
-        # PyTorch ResNet50 backbone modified for metric learning
-        self.backbone = resnet50(weights=ResNet50_Weights.DEFAULT)
-        num_ftrs = self.backbone.fc.in_features
-        self.backbone.fc = nn.Linear(num_ftrs, embedding_size)
+# ==========================================
+# 2. STATE-OF-THE-ART BACKBONE (ConvNeXt)
+# ==========================================
+class ConvNeXtFontEncoder(nn.Module):
+    def __init__(self, embedding_dim=256):
+        super(ConvNeXtFontEncoder, self).__init__()
+        # Load ConvNeXt-Tiny as a pure feature extractor
+        self.backbone = timm.create_model('convnext_tiny', pretrained=True, num_classes=0)
+        num_features = self.backbone.num_features
+        
+        # Custom projection head for Deep Metric Learning
+        self.fc = nn.Linear(num_features, embedding_dim)
 
     def forward(self, x):
-        x = self.backbone(x)
-        # L2-normalized 256D embedding vector
-        x = F.normalize(x, p=2, dim=1)
-        return x
-
-def get_train_transforms():
-    # Albumentations: noise, blur, slight rotation
-    return A.Compose([
-        A.Rotate(limit=10, p=0.5, border_mode=0, value=(255, 255, 255)),
-        A.GaussianBlur(blur_limit=(3, 7), p=0.3),
-        A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
-        # ImageNet normalization standard for ResNet
-        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-        ToTensorV2()
-    ])
+        features = self.backbone(x)
+        embeddings = self.fc(features)
+        # Strict L2 Normalization to place embeddings on a hypersphere
+        return F.normalize(embeddings, p=2, dim=1)
 
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Targeting device: {device}")
     
-    # Initialize Dataset and Transformations
     transform = get_train_transforms()
     dataset = DynamicFontDataset(TTF_DIR, transform=transform)
     
-    # Custom Sampler for Virtual Epochs and Triplet Construction
     batch_sampler = VirtualEpochBatchSampler(
         num_classes=len(dataset),
         batch_size=BATCH_SIZE,
@@ -152,7 +161,6 @@ def train():
         num_batches=VIRTUAL_EPOCH_BATCHES
     )
     
-    # Dataloader configurations for maximum PCIe throughput
     dataloader = DataLoader(
         dataset, 
         batch_sampler=batch_sampler, 
@@ -161,23 +169,29 @@ def train():
         persistent_workers=True
     )
     
-    # Initialize Model, Loss, Miner, Optimizer, Scheduler
-    model = FontEmbeddingModel(embedding_size=EMBEDDING_SIZE).to(device)
+    model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE).to(device)
     
     miner = miners.BatchHardMiner()
-    loss_fn = losses.TripletMarginLoss(margin=0.2)
+    
+    # ==========================================
+    # 3. CROSS-BATCH MEMORY LOGIC
+    # ==========================================
+    base_loss_function = losses.MultiSimilarityLoss(alpha=2.0, beta=50.0, base=0.5)
+    loss_func = losses.CrossBatchMemory(
+        loss=base_loss_function, 
+        embedding_size=EMBEDDING_SIZE, 
+        memory_size=4096
+    ).to(device)
     
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
     
-    # Mixed Precision Scaler
     scaler = torch.amp.GradScaler('cuda' if torch.cuda.is_available() else 'cpu')
     
-    # Early Stopping tracking
     best_loss = float('inf')
     epochs_no_improve = 0
     
-    logger.info("Starting Dynamic Training Pipeline...")
+    logger.info("Starting Gold-Standard Dynamic Training Pipeline...")
     
     for epoch in range(1, MAX_EPOCHS + 1):
         model.train()
@@ -189,11 +203,10 @@ def train():
             
             optimizer.zero_grad()
             
-            # torch.amp Automatic Mixed Precision
             with torch.autocast(device_type=device.type, enabled=True):
                 embeddings = model(images)
                 hard_pairs = miner(embeddings, labels)
-                loss = loss_fn(embeddings, labels, hard_pairs)
+                loss = loss_func(embeddings, labels, hard_pairs)
             
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -206,14 +219,12 @@ def train():
                 logger.info(f"Epoch {epoch} | Batch {batch_idx + 1}/{VIRTUAL_EPOCH_BATCHES} | "
                             f"Loss: {loss.item():.4f} | Active Triplets: {miner.num_triplets}")
         
-        # End of Virtual Epoch
         avg_loss = running_loss / VIRTUAL_EPOCH_BATCHES
         scheduler.step()
         
         logger.info(f"=== Epoch {epoch} Summary ===")
         logger.info(f"Average Loss: {avg_loss:.4f} | Total Hard Triplets: {active_triplets}")
         
-        # Early Stopping Logic based strictly on lowest recorded training loss
         if avg_loss < best_loss:
             best_loss = avg_loss
             epochs_no_improve = 0

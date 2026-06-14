@@ -9,7 +9,7 @@ import torchvision.transforms as T
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from train_virtual_epochs import FontEmbeddingModel, TTF_DIR
+from train_virtual_epochs import ConvNeXtFontEncoder, TTF_DIR
 
 # Hardcoded constraints
 EMBEDDING_SIZE = 256
@@ -22,6 +22,7 @@ CANONICAL_STRINGS = ["AaBbCc", "xyz123", "0OIl", "gjpqy", "Test 00"]
 
 def get_inference_transform():
     # Only normalize, no augmentation for clean canonical renders
+    # Since these are synthetic internal renders, they are already perfectly clean.
     return T.Compose([
         T.ToTensor(),
         T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
@@ -50,8 +51,8 @@ def build_index():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Load Model
-    model = FontEmbeddingModel(embedding_size=EMBEDDING_SIZE)
+    # Load ConvNeXt Model
+    model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE)
     if os.path.exists(MODEL_PATH):
         model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
     else:
