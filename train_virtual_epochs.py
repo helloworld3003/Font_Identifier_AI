@@ -164,9 +164,8 @@ def train():
     dataloader = DataLoader(
         dataset, 
         batch_sampler=batch_sampler, 
-        num_workers=4, 
-        pin_memory=True, 
-        persistent_workers=True
+        num_workers=2, 
+        pin_memory=True
     )
     
     model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE).to(device)
@@ -180,7 +179,8 @@ def train():
     loss_func = losses.CrossBatchMemory(
         loss=base_loss_function, 
         embedding_size=EMBEDDING_SIZE, 
-        memory_size=4096
+        memory_size=4096,
+        miner=miner
     ).to(device)
     
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
@@ -199,14 +199,13 @@ def train():
         active_triplets = 0
         
         for batch_idx, (images, labels) in enumerate(dataloader):
-            images, labels = images.to(device), labels.to(device)
+            images, labels = images.to(device), labels.to(device).long()
             
             optimizer.zero_grad()
             
             with torch.autocast(device_type=device.type, enabled=True):
                 embeddings = model(images)
-                hard_pairs = miner(embeddings, labels)
-                loss = loss_func(embeddings, labels, hard_pairs)
+                loss = loss_func(embeddings, labels)
             
             scaler.scale(loss).backward()
             scaler.step(optimizer)
