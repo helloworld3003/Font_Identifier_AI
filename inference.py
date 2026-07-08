@@ -63,6 +63,41 @@ def draw_label(draw, bbox, text):
     draw.rectangle(tab_rect, fill="red")
     draw.text((xmin + 2, ymin - text_h - 2), text, font=font, fill="white")
 
+def auto_detect_text_boxes(image_path):
+    """
+    Automatically detects text regions in the image using adaptive binarization 
+    and morphological dilation to merge character contours into horizontal line segments.
+    """
+    img = cv2.imread(image_path)
+    if img is None:
+        return []
+        
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # Binarize with threshold inversion (text is white on black background for morphological ops)
+    thresh = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY_INV, 11, 2
+    )
+    
+    # Kernel size has wide width to merge characters/words horizontally 
+    # but thin height so lines do not merge vertically.
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (30, 4))
+    dilated = cv2.dilate(thresh, kernel, iterations=1)
+    
+    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    boxes = []
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        # Filter out very small boxes to avoid noise
+        if w > 15 and h > 10:
+            boxes.append({'box': (x, y, x + w, y + h)})
+            
+    # Sort bounding boxes top-to-bottom
+    boxes = sorted(boxes, key=lambda b: b['box'][1])
+    return boxes
+
 def run_inference(image_path, bounding_boxes):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -87,6 +122,9 @@ def run_inference(image_path, bounding_boxes):
     
     print("Performing Font Inference with Adaptive Binarization...")
     
+    crops_tensors = []
+    valid_bboxes = []
+    
     for item in bounding_boxes:
         bbox = item['box']
         xmin, ymin, xmax, ymax = bbox
@@ -98,19 +136,30 @@ def run_inference(image_path, bounding_boxes):
         crop_np = np.array(crop_img)
         
         # Apply Adaptive Threshold Pipeline
-        tensor = preprocess_inference_crop(crop_np).to(device)
+        tensor = preprocess_inference_crop(crop_np) # Shape: (1, 3, 224, 224)
+        crops_tensors.append(tensor)
+        valid_bboxes.append(bbox)
         
-        with torch.no_grad():
-            with torch.autocast(device_type=device.type, enabled=True):
-                embedding = model(tensor)
-            embedding = F.normalize(embedding, p=2, dim=1)
-            
-        vector_np = embedding.cpu().numpy().astype('float32')
+    if not crops_tensors:
+        print("No valid bounding boxes to run inference on.")
+        return
+
+    # Stack all tensors into a single batch tensor: shape (N, 3, 224, 224)
+    batch_tensor = torch.cat(crops_tensors, dim=0).to(device)
+    
+    with torch.no_grad():
+        with torch.autocast(device_type=device.type, enabled=True):
+            embeddings = model(batch_tensor)
+        embeddings = F.normalize(embeddings, p=2, dim=1)
         
-        distances, indices = index.search(vector_np, 1)
-        
-        top1_idx = indices[0][0]
-        confidence = distances[0][0] * 100 
+    vectors_np = embeddings.cpu().numpy().astype('float32')
+    
+    # Perform batched search in FAISS
+    distances, indices = index.search(vectors_np, 1)
+    
+    for idx, bbox in enumerate(valid_bboxes):
+        top1_idx = indices[idx][0]
+        confidence = distances[idx][0] * 100 
         
         match_row = mapping_df[mapping_df['faiss_id'] == top1_idx].iloc[0]
         font_name = match_row['font_name']
@@ -137,7 +186,13 @@ if __name__ == "__main__":
             boxes.append({'box': (int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))})
             
     if not boxes:
-        img_temp = Image.open(img_path)
-        boxes.append({'box': (0, 0, img_temp.width, img_temp.height)})
+        print("No bounding boxes provided. Running auto-detector to locate text regions...")
+        boxes = auto_detect_text_boxes(img_path)
+        if not boxes:
+            print("Auto-detector found no text regions. Defaulting to full image.")
+            img_temp = Image.open(img_path)
+            boxes.append({'box': (0, 0, img_temp.width, img_temp.height)})
+        else:
+            print(f"Auto-detected {len(boxes)} text regions.")
         
     run_inference(img_path, boxes)

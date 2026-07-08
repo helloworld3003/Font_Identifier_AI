@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 import torchvision.transforms as T
 import torch.nn.functional as F
 from tqdm import tqdm
+from torch.utils.data import Dataset, DataLoader
 
 from train_virtual_epochs import ConvNeXtFontEncoder, TTF_DIR
 
@@ -47,6 +48,28 @@ def render_string(ttf_path, text, canvas_size=224, font_size=60):
     except Exception:
         return Image.new("RGB", (canvas_size, canvas_size), "white")
 
+class FontRenderDataset(Dataset):
+    def __init__(self, ttf_files, transform=None):
+        self.ttf_files = ttf_files
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.ttf_files)
+
+    def __getitem__(self, idx):
+        ttf_path = self.ttf_files[idx]
+        tensors = []
+        for text in CANONICAL_STRINGS:
+            img = render_string(ttf_path, text)
+            if self.transform:
+                tensor = self.transform(img)
+            else:
+                tensor = torch.from_numpy(np.array(img)).permute(2, 0, 1).float() / 255.0
+            tensors.append(tensor)
+        
+        # Shape: (5, 3, 224, 224)
+        return torch.stack(tensors), idx
+
 def build_index():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -64,35 +87,45 @@ def build_index():
     ttf_files = list(Path(TTF_DIR).rglob("*.ttf"))
     print(f"Found {len(ttf_files)} fonts to index.")
 
+    dataset = FontRenderDataset(ttf_files, transform=transform)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=32,
+        num_workers=2,
+        pin_memory=True
+    )
+
     # Initialize FAISS Index (Inner Product for Cosine Similarity since vectors are L2 normalized)
     index = faiss.IndexFlatIP(EMBEDDING_SIZE)
     mapping_data = []
     font_vectors = []
     
-    # Process each font sequentially to build a robust index
-    for i in tqdm(range(len(ttf_files)), desc="Extracting canonical embeddings"):
-        ttf_path = ttf_files[i]
-        
-        tensors = []
-        for text in CANONICAL_STRINGS:
-            img = render_string(ttf_path, text)
-            tensor = transform(img)
-            tensors.append(tensor)
-            
-        # Shape: (5, 3, 224, 224)
-        batch = torch.stack(tensors).to(device)
+    # Process fonts in batches
+    for batch_tensors, indices in tqdm(dataloader, desc="Extracting canonical embeddings"):
+        B = batch_tensors.size(0)
+        flat_batch = batch_tensors.view(B * 5, 3, 224, 224).to(device)
         
         with torch.no_grad():
             with torch.autocast(device_type=device.type, enabled=True):
-                embeddings = model(batch) # Shape: (5, 256)
+                embeddings = model(flat_batch) # Shape: (B * 5, 256)
             
+            # Reshape back to (B, 5, 256)
+            embeddings = embeddings.view(B, 5, EMBEDDING_SIZE)
             # Average the 5 embeddings to create a stable vector
-            avg_embedding = torch.mean(embeddings, dim=0, keepdim=True)
+            avg_embeddings = torch.mean(embeddings, dim=1) # Shape: (B, 256)
             # Re-normalize to ensure L2 norm = 1 (Cosine Similarity prerequisite)
-            avg_embedding = F.normalize(avg_embedding, p=2, dim=1)
+            avg_embeddings = F.normalize(avg_embeddings, p=2, dim=1)
             
-        font_vectors.append(avg_embedding.cpu().numpy().flatten())
-        mapping_data.append({"faiss_id": i, "font_path": str(ttf_path), "font_name": ttf_path.stem})
+        font_vectors.append(avg_embeddings.cpu().numpy())
+        
+        for idx_in_batch in range(B):
+            global_idx = indices[idx_in_batch].item()
+            ttf_path = ttf_files[global_idx]
+            mapping_data.append({
+                "faiss_id": global_idx, 
+                "font_path": str(ttf_path), 
+                "font_name": ttf_path.stem
+            })
 
     # Ingest into FAISS
     vectors_np = np.vstack(font_vectors).astype('float32')

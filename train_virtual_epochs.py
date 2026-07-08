@@ -30,11 +30,11 @@ EMBEDDING_SIZE = 256
 VIRTUAL_EPOCH_BATCHES = 10000
 MAX_EPOCHS = 50
 LEARNING_RATE = 1e-4
-PATIENCE = 5
+PATIENCE = 15
 
 # ==========================================
 # 1. TRAIN/TEST SYMMETRY AUGMENTATION
-# ==========================================
+# ========================================== 
 def simulate_adaptive_threshold(image, **kwargs):
     """
     Simulates OpenCV adaptive thresholding during training 
@@ -190,10 +190,31 @@ def train():
     
     best_loss = float('inf')
     epochs_no_improve = 0
+    start_epoch = 1
     
+    CHECKPOINT_PATH = "checkpoint.pth"
+    MODEL_PATH = "best_model.pth"
+    
+    # Check for checkpoint or model weights to resume
+    if os.path.exists(CHECKPOINT_PATH):
+        logger.info(f"Found checkpoint file '{CHECKPOINT_PATH}'. Resuming training...")
+        checkpoint = torch.load(CHECKPOINT_PATH, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        scaler.load_state_dict(checkpoint['scaler_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_loss = checkpoint['best_loss']
+        epochs_no_improve = checkpoint['epochs_no_improve']
+        logger.info(f"Resumed from epoch {checkpoint['epoch']} with best loss {best_loss:.4f}.")
+    elif os.path.exists(MODEL_PATH):
+        logger.info(f"Checkpoint not found. Loading model weights from '{MODEL_PATH}' to continue training...")
+        model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
+        logger.info(f"Successfully loaded model weights. Starting training from Epoch 1.")
+        
     logger.info("Starting Gold-Standard Dynamic Training Pipeline...")
     
-    for epoch in range(1, MAX_EPOCHS + 1):
+    for epoch in range(start_epoch, MAX_EPOCHS + 1):
         model.train()
         running_loss = 0.0
         active_triplets = 0
@@ -224,14 +245,31 @@ def train():
         logger.info(f"=== Epoch {epoch} Summary ===")
         logger.info(f"Average Loss: {avg_loss:.4f} | Total Hard Triplets: {active_triplets}")
         
+        # Save complete training state at the end of each epoch for safety
+        checkpoint_state = {
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'scaler_state_dict': scaler.state_dict(),
+            'best_loss': best_loss,
+            'epochs_no_improve': epochs_no_improve
+        }
+        
         if avg_loss < best_loss:
             best_loss = avg_loss
             epochs_no_improve = 0
             torch.save(model.state_dict(), "best_model.pth")
-            logger.info(f"New best loss achieved! Saved best_model.pth")
+            
+            checkpoint_state['best_loss'] = best_loss
+            checkpoint_state['epochs_no_improve'] = epochs_no_improve
+            torch.save(checkpoint_state, "checkpoint.pth")
+            logger.info(f"New best loss achieved! Saved best_model.pth and checkpoint.pth")
         else:
             epochs_no_improve += 1
-            logger.info(f"No improvement. Early stopping patience: {epochs_no_improve}/{PATIENCE}")
+            checkpoint_state['epochs_no_improve'] = epochs_no_improve
+            torch.save(checkpoint_state, "checkpoint.pth")
+            logger.info(f"No improvement. Early stopping patience: {epochs_no_improve}/{PATIENCE}. Saved checkpoint.pth")
             
         if epochs_no_improve >= PATIENCE:
             logger.warning(f"Early stopping triggered after {epoch} epochs!")

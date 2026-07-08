@@ -16,6 +16,7 @@ new_fonts/
 pre_fonts/
 fonts/
 extras/
+eval_results/
 
 
 # # PyTorch Models & Weights
