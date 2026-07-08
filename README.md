@@ -34,8 +34,6 @@ The production evaluation tool.
 - Queries FAISS to return the Top-1 closest typographic match in milliseconds.
 - Features a visual output that draws red bounding boxes and solid label tabs displaying the predicted Font Name and Confidence percentage (`visual_result.png`).
 
-### ⚙️ Auxiliary: Metadata Generation (`generate_metadata.py`)
-Crawls the massive dataset using Python `multiprocessing` to rapidly extract typography metadata (Family, Subfamily, Full Name) from internal TTF tables into a clean `fonts_metadata.csv` file.
 
 ---
 
