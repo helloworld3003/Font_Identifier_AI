@@ -18,10 +18,10 @@ fonts/
 extras/
 
 
-# PyTorch Models & Weights
-*.pth
-best_metric_model.pth
-poc_metric_model.pth
+# # PyTorch Models & Weights
+# *.pth
+# best_metric_model.pth
+# poc_metric_model.pth
 
 # FAISS Databases & CSV Metadata
 *.index

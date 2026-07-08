@@ -1,1 +1,2 @@
 # Git attributes
+*.pth filter=lfs diff=lfs merge=lfs -text
