@@ -116,7 +116,8 @@ class DynamicFontDataset(Dataset):
             
             draw.text((x, y), text, font=font, fill="black")
         except Exception:
-            image = Image.new("RGB", (224, 224), "white")
+            # If rendering fails, recursively pull a different random font sample
+            return self.__getitem__(random.randint(0, len(self.ttf_files) - 1))
             
         image_np = np.array(image)
 
@@ -226,9 +227,16 @@ def train():
             
             with torch.autocast(device_type=device.type, enabled=True):
                 embeddings = model(images)
-                loss = loss_func(embeddings, labels)
+                
+            # Compute loss in float32 to prevent float16 exponential overflow
+            loss = loss_func(embeddings.float(), labels)
             
             scaler.scale(loss).backward()
+            
+            # Unscale gradients and clip to prevent exploding gradients
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            
             scaler.step(optimizer)
             scaler.update()
             
