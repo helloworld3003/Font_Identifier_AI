@@ -29,7 +29,7 @@ M_PER_CLASS = 4
 EMBEDDING_SIZE = 256
 VIRTUAL_EPOCH_BATCHES = 10000
 MAX_EPOCHS = 50
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 2e-5
 PATIENCE = 15
 
 # ==========================================
@@ -145,8 +145,8 @@ class ConvNeXtFontEncoder(nn.Module):
     def forward(self, x):
         features = self.backbone(x)
         embeddings = self.fc(features)
-        # Strict L2 Normalization to place embeddings on a hypersphere
-        return F.normalize(embeddings, p=2, dim=1)
+        # Strict L2 Normalization MUST be in float32 to prevent float16 overflow/underflow
+        return F.normalize(embeddings.float(), p=2, dim=1)
 
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -180,7 +180,7 @@ def train():
     loss_func = losses.CrossBatchMemory(
         loss=base_loss_function, 
         embedding_size=EMBEDDING_SIZE, 
-        memory_size=4096,
+        memory_size=65536,
         miner=miner
     ).to(device)
     
@@ -231,6 +231,10 @@ def train():
             # Compute loss in float32 to prevent float16 exponential overflow
             loss = loss_func(embeddings.float(), labels)
             
+            if torch.isnan(loss):
+                logger.error("Loss is NaN! Stopping training immediately to prevent checkpoint corruption.")
+                return # Exit the train loop entirely
+                
             scaler.scale(loss).backward()
             
             # Unscale gradients and clip to prevent exploding gradients
