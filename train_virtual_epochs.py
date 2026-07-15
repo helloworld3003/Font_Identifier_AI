@@ -349,7 +349,7 @@ def train():
             logger.info(f"No improvement. Early stopping patience: {epochs_no_improve}/{PATIENCE}. Saved checkpoint.pth")
             
         # Regular milestone backup every 5 epochs
-        if epoch % 5 == 0:
+        if epoch % 2 == 0:
             torch.save(model.state_dict(), f'checkpoint_epoch_{epoch}.pth')
             logger.info(f"Milestone backup saved: checkpoint_epoch_{epoch}.pth")
             
