@@ -26,10 +26,11 @@ logger = logging.getLogger(__name__)
 TTF_DIR = "ttf_files"
 BATCH_SIZE = 64
 M_PER_CLASS = 4
-EMBEDDING_SIZE = 256
+EMBEDDING_SIZE = 512
 VIRTUAL_EPOCH_BATCHES = 10000
 MAX_EPOCHS = 50
-LEARNING_RATE = 2e-5
+LEARNING_RATE_BACKBONE = 2e-5
+LEARNING_RATE_HEAD = 5e-4
 PATIENCE = 15
 
 # ==========================================
@@ -55,6 +56,13 @@ def get_train_transforms():
         A.ImageCompression(quality_lower=50, quality_upper=95, p=0.4),
         A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
         A.GaussianBlur(blur_limit=(3, 5), p=0.3),
+        
+        # Micro-Geometry Augmentations simulating ink bleed and fading
+        A.OneOf([
+            A.Morphological(scale=(2, 2), op='erosion', p=0.5),
+            A.Morphological(scale=(2, 2), op='dilation', p=0.5)
+        ], p=0.4),
+        
         A.Lambda(image=simulate_adaptive_threshold, p=0.4),
         A.InvertImg(p=0.2), # Handles white-on-black text styles
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
@@ -82,9 +90,9 @@ class VirtualEpochBatchSampler(Sampler):
 
 class DynamicFontDataset(Dataset):
     def __init__(self, ttf_dir, transform=None):
-        self.ttf_files = list(Path(ttf_dir).rglob("*.ttf"))
+        self.ttf_files = list(Path(ttf_dir).rglob("*.ttf")) + list(Path(ttf_dir).rglob("*.otf"))
         if len(self.ttf_files) == 0:
-            raise ValueError(f"No TTF files found in {ttf_dir}")
+            raise ValueError(f"No font files found in {ttf_dir}")
         self.transform = transform
         logger.info(f"Loaded {len(self.ttf_files)} unique font files into the dataset.")
 
@@ -99,27 +107,41 @@ class DynamicFontDataset(Dataset):
         ttf_path = self.ttf_files[idx]
         
         try:
-            text = self.generate_random_string(random.randint(3, 8))
-            font_size = random.randint(40, 90)
+            text = self.generate_random_string(random.randint(4, 10))
+            font_size = random.randint(40, 80)
             font = ImageFont.truetype(str(ttf_path), font_size)
             
-            canvas_size = 224
-            image = Image.new("RGB", (canvas_size, canvas_size), "white")
-            draw = ImageDraw.Draw(image)
-
-            bbox = draw.textbbox((0, 0), text, font=font)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-
-            x = (canvas_size - text_w) / 2
-            y = (canvas_size - text_h) / 2
+            # Tightly crop bounding box first
+            temp_image = Image.new("RGB", (1, 1), "white")
+            temp_draw = ImageDraw.Draw(temp_image)
+            bbox = temp_draw.textbbox((0, 0), text, font=font)
+            text_w = max(1, bbox[2] - bbox[0])
+            text_h = max(1, bbox[3] - bbox[1])
             
-            draw.text((x, y), text, font=font, fill="black")
+            # Render exactly around the text
+            image = Image.new("RGB", (text_w, text_h), "white")
+            draw = ImageDraw.Draw(image)
+            draw.text((-bbox[0], -bbox[1]), text, font=font, fill="black")
+            
+            # Resize and pad into a strictly 64x256 canvas
+            target_w, target_h = 256, 64
+            scale = min(target_w / text_w, target_h / text_h)
+            new_w = max(1, int(text_w * scale))
+            new_h = max(1, int(text_h * scale))
+            
+            image = image.resize((new_w, new_h), Image.Resampling.BILINEAR)
+            
+            # Pad to 64x256
+            final_image = Image.new("RGB", (target_w, target_h), "white")
+            x = (target_w - new_w) // 2
+            y = (target_h - new_h) // 2
+            final_image.paste(image, (x, y))
+            
         except Exception:
             # If rendering fails, recursively pull a different random font sample
             return self.__getitem__(random.randint(0, len(self.ttf_files) - 1))
             
-        image_np = np.array(image)
+        image_np = np.array(final_image)
 
         if self.transform:
             augmented = self.transform(image=image_np)
@@ -130,20 +152,51 @@ class DynamicFontDataset(Dataset):
         return image_tensor, idx
 
 # ==========================================
-# 2. STATE-OF-THE-ART BACKBONE (ConvNeXt)
+# 2. STATE-OF-THE-ART BACKBONE & HE BLOCK
 # ==========================================
+
+class HE_Block(nn.Module):
+    """
+    Hide & Enhance (HE) Block.
+    Actively hides the maximum responding features during training to prevent feature collapse
+    and force the network to explore complicated micro-features instead of global styles.
+    """
+    def __init__(self, drop_ratio=0.15):
+        super(HE_Block, self).__init__()
+        self.drop_ratio = drop_ratio
+
+    def forward(self, x):
+        if not self.training:
+            return x
+            
+        batch_size, channels = x.size()
+        k = max(1, int(channels * self.drop_ratio))
+        
+        # Find indices of top k responses
+        _, topk_indices = torch.topk(x, k, dim=1)
+        
+        # Create a mask and zero out the top features
+        mask = torch.ones_like(x)
+        mask.scatter_(1, topk_indices, 0.0)
+        
+        return x * mask
+
 class ConvNeXtFontEncoder(nn.Module):
-    def __init__(self, embedding_dim=256):
+    def __init__(self, embedding_dim=512):
         super(ConvNeXtFontEncoder, self).__init__()
         # Load ConvNeXt-Tiny as a pure feature extractor
         self.backbone = timm.create_model('convnext_tiny', pretrained=True, num_classes=0)
         num_features = self.backbone.num_features
+        
+        # HE Block to prevent feature collapse
+        self.he_block = HE_Block(drop_ratio=0.15)
         
         # Custom projection head for Deep Metric Learning
         self.fc = nn.Linear(num_features, embedding_dim)
 
     def forward(self, x):
         features = self.backbone(x)
+        features = self.he_block(features)
         embeddings = self.fc(features)
         # Strict L2 Normalization MUST be in float32 to prevent float16 overflow/underflow
         return F.normalize(embeddings.float(), p=2, dim=1)
@@ -165,8 +218,9 @@ def train():
     dataloader = DataLoader(
         dataset, 
         batch_sampler=batch_sampler, 
-        num_workers=2, 
-        pin_memory=True
+        num_workers=4, 
+        pin_memory=True,
+        persistent_workers=True
     )
     
     model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE).to(device)
@@ -180,11 +234,17 @@ def train():
     loss_func = losses.CrossBatchMemory(
         loss=base_loss_function, 
         embedding_size=EMBEDDING_SIZE, 
-        memory_size=65536,
+        memory_size=32768,
         miner=miner
     ).to(device)
     
-    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
+    # Differential Learning Rates
+    param_groups = [
+        {'params': model.backbone.parameters(), 'lr': LEARNING_RATE_BACKBONE},
+        {'params': model.he_block.parameters(), 'lr': LEARNING_RATE_HEAD},
+        {'params': model.fc.parameters(), 'lr': LEARNING_RATE_HEAD},
+    ]
+    optimizer = optim.AdamW(param_groups, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=MAX_EPOCHS)
     
     scaler = torch.amp.GradScaler('cuda' if torch.cuda.is_available() else 'cpu')
@@ -210,8 +270,11 @@ def train():
         logger.info(f"Resumed from epoch {checkpoint['epoch']} with best loss {best_loss:.4f}.")
     elif os.path.exists(MODEL_PATH):
         logger.info(f"Checkpoint not found. Loading model weights from '{MODEL_PATH}' to continue training...")
-        model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
-        logger.info(f"Successfully loaded model weights. Starting training from Epoch 1.")
+        # Since architecture changed (HE_block added, fc shape changed to 512), strict=False is recommended
+        # or we might fail to load. We will use strict=False to gracefully load the backbone at least.
+        state_dict = torch.load(MODEL_PATH, map_location=device, weights_only=True)
+        model.load_state_dict(state_dict, strict=False)
+        logger.info(f"Successfully loaded backbone weights. Starting training from Epoch 1.")
         
     logger.info("Starting Gold-Standard Dynamic Training Pipeline...")
     
@@ -254,8 +317,10 @@ def train():
         avg_loss = running_loss / VIRTUAL_EPOCH_BATCHES
         scheduler.step()
         
+        current_lr = scheduler.get_last_lr()[0]
+        
         logger.info(f"=== Epoch {epoch} Summary ===")
-        logger.info(f"Average Loss: {avg_loss:.4f} | Total Hard Triplets: {active_triplets}")
+        logger.info(f"Average Loss: {avg_loss:.4f} | Total Hard Triplets: {active_triplets} | LR: {current_lr:.6f}")
         
         # Save complete training state at the end of each epoch for safety
         checkpoint_state = {
@@ -282,6 +347,11 @@ def train():
             checkpoint_state['epochs_no_improve'] = epochs_no_improve
             torch.save(checkpoint_state, "checkpoint.pth")
             logger.info(f"No improvement. Early stopping patience: {epochs_no_improve}/{PATIENCE}. Saved checkpoint.pth")
+            
+        # Regular milestone backup every 5 epochs
+        if epoch % 5 == 0:
+            torch.save(model.state_dict(), f'checkpoint_epoch_{epoch}.pth')
+            logger.info(f"Milestone backup saved: checkpoint_epoch_{epoch}.pth")
             
         if epochs_no_improve >= PATIENCE:
             logger.warning(f"Early stopping triggered after {epoch} epochs!")
