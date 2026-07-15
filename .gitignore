@@ -17,7 +17,7 @@ pre_fonts/
 fonts/
 extras/
 eval_results/
-
+1001_fonts/
 
 # # PyTorch Models & Weights
 # *.pth

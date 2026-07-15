@@ -12,3 +12,5 @@ pandas
 pillow
 fonttools
 tqdm
+aiohttp
+beautifulsoup4
