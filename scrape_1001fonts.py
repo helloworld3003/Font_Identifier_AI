@@ -35,13 +35,20 @@ async def save_downloaded_url(url):
             writer = csv.writer(f)
             writer.writerow([url])
 
-async def fetch_page(session, url):
-    try:
-        async with session.get(url, timeout=20) as response:
-            if response.status == 200:
-                return await response.text()
-    except Exception as e:
-        pass
+async def fetch_page(session, url, retries=3):
+    for attempt in range(retries):
+        try:
+            async with session.get(url, timeout=20) as response:
+                if response.status == 200:
+                    return await response.text()
+                elif response.status == 429:
+                    print(f"\n[!] Rate limited on {url}. Waiting 10 seconds...")
+                    await asyncio.sleep(10)
+                else:
+                    print(f"\n[!] Error {response.status} on {url}")
+        except Exception as e:
+            print(f"\n[!] Exception {e} on {url}. Attempt {attempt+1}/{retries}")
+            await asyncio.sleep(5)
     return None
 
 async def download_worker(name, session, queue, sem):
@@ -111,6 +118,7 @@ async def main():
             url = START_URL.format(page)
             html = await fetch_page(session, url)
             if not html:
+                print(f"\n[!] Failed to fetch page {page} after retries. The server might be blocking us. Stopping discovery phase.")
                 break
             
             soup = BeautifulSoup(html, 'html.parser')
