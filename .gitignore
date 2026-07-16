@@ -30,6 +30,7 @@ fonts-main.zip
 *.index
 *.csv
 !requirements.txt
+*.zip
 
 # Generated Output Images
 visual_result.png
