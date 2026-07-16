@@ -18,6 +18,8 @@ fonts/
 extras/
 eval_results/
 1001_fonts/
+fonts-main/
+fonts-main.zip
 
 # # PyTorch Models & Weights
 # *.pth
