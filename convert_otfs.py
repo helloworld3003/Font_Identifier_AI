@@ -14,6 +14,7 @@ def check_dependencies():
     try:
         subprocess.run(["otf2ttf", "--help"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
+        
     except FileNotFoundError:
         print("ERROR: 'otf2ttf' is not installed.")
         print("Please install it by running: pip install otf2ttf")
