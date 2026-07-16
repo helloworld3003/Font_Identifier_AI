@@ -237,7 +237,13 @@ def train():
         pin_memory=True
     )
     
-    model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE).to(device)
+    model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE)
+    
+    if torch.cuda.device_count() > 1 and not is_tpu:
+        logger.info(f"Multi-GPU Detected! Engaging {torch.cuda.device_count()} GPUs via DataParallel.")
+        model = nn.DataParallel(model)
+        
+    model = model.to(device)
     
     miner = miners.BatchHardMiner()
     
