@@ -210,8 +210,15 @@ class ConvNeXtFontEncoder(nn.Module):
         return F.normalize(embeddings.float(), p=2, dim=1)
 
 def train():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info(f"Targeting device: {device}")
+    try:
+        import torch_xla.core.xla_model as xm
+        device = xm.xla_device()
+        is_tpu = True
+        logger.info(f"Targeting Google TPU Device: {device}")
+    except ImportError:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        is_tpu = False
+        logger.info(f"Targeting device: {device}")
     
     transform = get_train_transforms()
     dataset = DynamicFontDataset(TTF_DIR, transform=transform)
@@ -296,24 +303,37 @@ def train():
             
             optimizer.zero_grad()
             
-            with torch.autocast(device_type=device.type, enabled=True):
+            if is_tpu:
+                # XLA handles bfloat16 natively on TPUs without autocast or scaler
                 embeddings = model(images)
+                loss = loss_func(embeddings.float(), labels)
                 
-            # Compute loss in float32 to prevent float16 exponential overflow
-            loss = loss_func(embeddings.float(), labels)
-            
-            if torch.isnan(loss):
-                logger.error("Loss is NaN! Stopping training immediately to prevent checkpoint corruption.")
-                return # Exit the train loop entirely
+                if torch.isnan(loss):
+                    logger.error("Loss is NaN! Stopping training immediately to prevent checkpoint corruption.")
+                    return
+                    
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                xm.optimizer_step(optimizer)
+            else:
+                with torch.autocast(device_type=device.type, enabled=True):
+                    embeddings = model(images)
+                    
+                # Compute loss in float32 to prevent float16 exponential overflow
+                loss = loss_func(embeddings.float(), labels)
                 
-            scaler.scale(loss).backward()
-            
-            # Unscale gradients and clip to prevent exploding gradients
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            
-            scaler.step(optimizer)
-            scaler.update()
+                if torch.isnan(loss):
+                    logger.error("Loss is NaN! Stopping training immediately to prevent checkpoint corruption.")
+                    return # Exit the train loop entirely
+                    
+                scaler.scale(loss).backward()
+                
+                # Unscale gradients and clip to prevent exploding gradients
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                
+                scaler.step(optimizer)
+                scaler.update()
             
             running_loss += loss.item()
             active_triplets += miner.num_triplets
