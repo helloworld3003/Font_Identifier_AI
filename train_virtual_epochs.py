@@ -24,12 +24,15 @@ from PIL import Image, ImageDraw, ImageFont
 
 from pytorch_metric_learning import losses, miners
 
+import logging
+from tqdm import tqdm
+
 # Configure Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 TTF_DIR = "ttf_files"
-BATCH_SIZE = 64
+BATCH_SIZE = 512
 M_PER_CLASS = 4
 EMBEDDING_SIZE = 512
 VIRTUAL_EPOCH_BATCHES = 10000
@@ -287,7 +290,8 @@ def train():
         running_loss = 0.0
         active_triplets = 0
         
-        for batch_idx, (images, labels) in enumerate(dataloader):
+        pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{MAX_EPOCHS}", total=VIRTUAL_EPOCH_BATCHES)
+        for batch_idx, (images, labels) in enumerate(pbar):
             images, labels = images.to(device), labels.to(device).long()
             
             optimizer.zero_grad()
@@ -314,9 +318,7 @@ def train():
             running_loss += loss.item()
             active_triplets += miner.num_triplets
             
-            if (batch_idx + 1) % 500 == 0:
-                logger.info(f"Epoch {epoch} | Batch {batch_idx + 1}/{VIRTUAL_EPOCH_BATCHES} | "
-                            f"Loss: {loss.item():.4f} | Active Triplets: {miner.num_triplets}")
+            pbar.set_postfix({'loss': f"{loss.item():.4f}", 'triplets': miner.num_triplets})
         
         avg_loss = running_loss / VIRTUAL_EPOCH_BATCHES
         scheduler.step()
