@@ -218,8 +218,8 @@ def train():
     dataloader = DataLoader(
         dataset, 
         batch_sampler=batch_sampler, 
-        num_workers=2, 
-        pin_memory=True
+        num_workers=0, 
+        pin_memory=False
     )
     
     model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE).to(device)
