@@ -9,6 +9,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+import torch.multiprocessing as mp
+
+# Bypass Google Colab's strict 64MB /dev/shm limit by forcing PyTorch to use the disk (/tmp) for IPC
+mp.set_sharing_strategy('file_system')
+
 from torch.utils.data import Dataset, DataLoader, Sampler
 
 import numpy as np
@@ -218,8 +223,8 @@ def train():
     dataloader = DataLoader(
         dataset, 
         batch_sampler=batch_sampler, 
-        num_workers=0, 
-        pin_memory=False
+        num_workers=2, 
+        pin_memory=True
     )
     
     model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE).to(device)
