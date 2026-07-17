@@ -230,14 +230,11 @@ def _mp_fn(index, flags):
     # 3. Model & Loss Setup
     model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE).to(device)
     
-    miner = miners.BatchHardMiner()
-    base_loss_function = losses.MultiSimilarityLoss(alpha=2.0, beta=50.0, base=0.5)
-    loss_func = losses.CrossBatchMemory(
-        loss=base_loss_function, 
-        embedding_size=EMBEDDING_SIZE, 
-        memory_size=4096, # Scaled down per core
-        miner=miner
-    ).to(device)
+    # XLA CRITICAL FIX: CrossBatchMemory uses dynamic queues and BatchHardMiner produces 
+    # dynamically-shaped index tensors. This forces PyTorch XLA to infinitely recompile the 
+    # hardware graph every batch, causing 10,000% CPU and 200GB RAM memory leaks!
+    # By using pure MultiSimilarityLoss, the pairwise distance matrix is strictly static (64x64).
+    loss_func = losses.MultiSimilarityLoss(alpha=2.0, beta=50.0, base=0.5).to(device)
     
     # 4. Optimizer Setup
     param_groups = [
