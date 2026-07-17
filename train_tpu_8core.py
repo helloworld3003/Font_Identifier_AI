@@ -35,11 +35,11 @@ logger = logging.getLogger(__name__)
 # Check if running on Kaggle and auto-mount the dataset to prevent symlink errors
 kaggle_input_dir = Path("/kaggle/input")
 if kaggle_input_dir.exists():
-    found_dirs = list(kaggle_input_dir.glob("*/ttf_files"))
-    if found_dirs:
-        TTF_DIR = str(found_dirs[0])
-        logger.info(f"Auto-detected Kaggle dataset at: {TTF_DIR}")
-    else:
+    try:
+        first_ttf = next(kaggle_input_dir.rglob("*.ttf"))
+        TTF_DIR = str(first_ttf.parent)
+        print(f"Auto-detected Kaggle dataset at: {TTF_DIR}")
+    except StopIteration:
         TTF_DIR = "ttf_files"
 else:
     TTF_DIR = "ttf_files"
