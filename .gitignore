@@ -16,7 +16,7 @@ ttf_files.rar
 new_fonts/
 pre_fonts/
 fonts/
-extras/
+# extras/
 eval_results/
 1001_fonts/
 fonts-main/
