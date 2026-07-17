@@ -11,7 +11,8 @@ from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 
 # Import the correct modern model architecture
-from train_tpu_8core import ConvNeXtFontEncoder, TTF_DIR
+from model import ConvNeXtFontEncoder
+TTF_DIR = "ttf_files"
 
 # Hardcoded constraints MUST match train_tpu_8core.py exactly
 EMBEDDING_SIZE = 512

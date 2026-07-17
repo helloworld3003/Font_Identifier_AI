@@ -8,7 +8,7 @@ import cv2
 from PIL import Image, ImageDraw, ImageFont
 import torch.nn.functional as F
 
-from train_tpu_8core import ConvNeXtFontEncoder
+from model import ConvNeXtFontEncoder
 
 EMBEDDING_SIZE = 512
 MODEL_PATH = "best_model.pth"
