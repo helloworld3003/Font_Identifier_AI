@@ -226,6 +226,13 @@ def _mp_fn(index, flags):
         checkpoint = torch.load(CHECKPOINT_PATH, map_location='cpu')
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        # PyTorch XLA CRITICAL FIX: Explicitly move optimizer momentum tensors to TPU
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to(device)
+                    
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         best_loss = checkpoint['best_loss']
