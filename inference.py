@@ -8,9 +8,9 @@ import cv2
 from PIL import Image, ImageDraw, ImageFont
 import torch.nn.functional as F
 
-from train_virtual_epochs import ConvNeXtFontEncoder
+from train_tpu_8core import ConvNeXtFontEncoder
 
-EMBEDDING_SIZE = 256
+EMBEDDING_SIZE = 512
 MODEL_PATH = "best_model.pth"
 INDEX_PATH = "font_embeddings.index"
 MAPPING_PATH = "faiss_mapping.csv"
@@ -21,8 +21,8 @@ def preprocess_inference_crop(image_np):
     to remove backgrounds, lighting variation, and shadows.
     Ensures Train/Test Symmetry with the training augmentations.
     """
-    # Resize to match backbone input resolution
-    image_np = cv2.resize(image_np, (224, 224))
+    # Resize to match backbone input resolution exactly (W=256, H=64)
+    image_np = cv2.resize(image_np, (256, 64))
     
     # 1. Convert to Grayscale
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
@@ -136,7 +136,7 @@ def run_inference(image_path, bounding_boxes):
         crop_np = np.array(crop_img)
         
         # Apply Adaptive Threshold Pipeline
-        tensor = preprocess_inference_crop(crop_np) # Shape: (1, 3, 224, 224)
+        tensor = preprocess_inference_crop(crop_np) # Shape: (1, 3, 64, 256)
         crops_tensors.append(tensor)
         valid_bboxes.append(bbox)
         
@@ -144,12 +144,11 @@ def run_inference(image_path, bounding_boxes):
         print("No valid bounding boxes to run inference on.")
         return
 
-    # Stack all tensors into a single batch tensor: shape (N, 3, 224, 224)
+    # Stack all tensors into a single batch tensor: shape (N, 3, 64, 256)
     batch_tensor = torch.cat(crops_tensors, dim=0).to(device)
     
     with torch.no_grad():
-        with torch.autocast(device_type=device.type, enabled=True):
-            embeddings = model(batch_tensor)
+        embeddings = model(batch_tensor)
         embeddings = F.normalize(embeddings, p=2, dim=1)
         
     vectors_np = embeddings.cpu().numpy().astype('float32')
@@ -159,6 +158,7 @@ def run_inference(image_path, bounding_boxes):
     
     for idx, bbox in enumerate(valid_bboxes):
         top1_idx = indices[idx][0]
+        # Calculate confidence metric
         confidence = distances[idx][0] * 100 
         
         match_row = mapping_df[mapping_df['faiss_id'] == top1_idx].iloc[0]
