@@ -21,8 +21,8 @@ from pytorch_metric_learning import losses, miners
 from torch.utils.data import Dataset, DataLoader, Sampler
 
 # --- PyTorch XLA Imports ---
-import torch_xla.core.xla_model as xm
-import torch_xla.distributed.parallel_loader as pl
+# We only import the multiprocessing wrapper globally. 
+# We MUST NOT import the C++ backend (xm) globally, or the parent process will steal the TPU lock!
 import torch_xla.distributed.xla_multiprocessing as xmp
 
 # Configure global logger (mostly disabled for workers, handled via xm.master_print)
@@ -106,6 +106,8 @@ class DynamicFontDataset(Dataset):
         self.transform = transform
         
         # Only master node should print dataset stats
+        # Import xm locally so the parent process doesn't accidentally initialize the TPU backend
+        import torch_xla.core.xla_model as xm
         xm.master_print(f"Loaded {len(self.ttf_files)} unique font files into the dataset.")
 
     def __len__(self):
@@ -169,9 +171,12 @@ def _mp_fn(index, flags):
     """
     This function is replicated 8 times and runs independently on each TPU core.
     """
-    # 1. Acquire current TPU core device (Updated for PyTorch XLA 2.x)
-    import torch_xla
-    device = torch_xla.device()
+    # Import C++ backend ONLY inside the child processes!
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.parallel_loader as pl
+    
+    # 1. Acquire current TPU core device
+    device = xm.xla_device()
     xm.master_print(f"Executing Deep Metric Learning on 8 Google Cloud TPU Cores.")
     
     transform = get_train_transforms()
@@ -328,4 +333,4 @@ if __name__ == "__main__":
         
     flags = {}
     # Use nprocs=None (default) so PJRT automatically detects all 8 TPU cores
-    xmp.spawn(_mp_fn, args=(flags,), nprocs=None, start_method='fork')
+    xmp.spawn(_mp_fn, args=(flags,), nprocs=None, start_method='spawn')
