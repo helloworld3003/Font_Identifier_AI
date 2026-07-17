@@ -1,4 +1,12 @@
 import os
+
+# XLA CRITICAL FIX: Kaggle injects legacy TPU environment variables that violently conflict 
+# with modern PyTorch XLA PJRT. We MUST delete these BEFORE importing torch_xla!
+if 'TPU_PROCESS_ADDRESSES' in os.environ:
+    del os.environ['TPU_PROCESS_ADDRESSES']
+if 'TPU_NAME' in os.environ:
+    del os.environ['TPU_NAME']
+
 import random
 import string
 import logging
@@ -312,12 +320,6 @@ if __name__ == "__main__":
     # Pre-download ConvNeXt weights on the master thread to prevent 8-core race conditions
     print("Pre-downloading ConvNeXt weights to avoid XLA multiprocessing race conditions...")
     _ = timm.create_model('convnext_tiny', pretrained=True, num_classes=0)
-    
-    # Kaggle injects legacy TPU environment variables that violently conflict with modern PyTorch XLA PJRT
-    if 'TPU_PROCESS_ADDRESSES' in os.environ:
-        del os.environ['TPU_PROCESS_ADDRESSES']
-    if 'TPU_NAME' in os.environ:
-        del os.environ['TPU_NAME']
         
     flags = {}
     # Use nprocs=None (default) so PJRT automatically detects all 8 TPU cores
