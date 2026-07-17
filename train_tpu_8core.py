@@ -338,4 +338,5 @@ if __name__ == "__main__":
     _ = timm.create_model('convnext_tiny', pretrained=True, num_classes=0)
     
     flags = {}
-    xmp.spawn(_mp_fn, args=(flags,), nprocs=8, start_method='fork')
+    # Use nprocs=None (default) so PJRT automatically detects all 8 TPU cores
+    xmp.spawn(_mp_fn, args=(flags,), nprocs=None, start_method='fork')
