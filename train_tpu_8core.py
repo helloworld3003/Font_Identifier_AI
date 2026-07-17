@@ -72,13 +72,7 @@ def get_train_transforms():
     return A.Compose([
         A.Rotate(limit=8, p=0.4),
         A.Perspective(scale=(0.05, 0.09), p=0.3),
-        A.ImageCompression(quality_lower=50, quality_upper=95, p=0.4),
-        A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
         A.GaussianBlur(blur_limit=(3, 5), p=0.3),
-        A.OneOf([
-            A.Morphological(scale=(2, 2), op='erosion', p=0.5),
-            A.Morphological(scale=(2, 2), op='dilation', p=0.5)
-        ], p=0.4),
         A.Lambda(image=simulate_adaptive_threshold, p=0.4),
         A.InvertImg(p=0.2), 
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
@@ -203,8 +197,9 @@ def _mp_fn(index, flags):
     """
     This function is replicated 8 times and runs independently on each TPU core.
     """
-    # 1. Acquire current TPU core device
-    device = xm.xla_device()
+    # 1. Acquire current TPU core device (Updated for PyTorch XLA 2.x)
+    import torch_xla
+    device = torch_xla.device()
     xm.master_print(f"Executing Deep Metric Learning on 8 Google Cloud TPU Cores.")
     
     transform = get_train_transforms()
