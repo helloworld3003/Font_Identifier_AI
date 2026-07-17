@@ -295,7 +295,7 @@ def _mp_fn(index, flags):
             if (batch_idx + 1) % 100 == 0:
                 xm.master_print(f"Epoch {epoch}/{MAX_EPOCHS} | Batch {batch_idx + 1}/{VIRTUAL_EPOCH_BATCHES} | Loss: {current_loss:.4f}")
         
-        avg_loss = running_loss / VIRTUAL_EPOCH_BATCHES
+        avg_loss = running_loss / (batch_idx + 1)
         scheduler.step()
         epoch_time = time.time() - start_time
         
