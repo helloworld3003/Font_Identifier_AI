@@ -30,9 +30,19 @@ logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# HYPERPARAMETERS
+# HYPERPARAMETERS & KAGGLE AUTO-DETECT
 # ==========================================
-TTF_DIR = "ttf_files"
+# Check if running on Kaggle and auto-mount the dataset to prevent symlink errors
+kaggle_input_dir = Path("/kaggle/input")
+if kaggle_input_dir.exists():
+    found_dirs = list(kaggle_input_dir.glob("*/ttf_files"))
+    if found_dirs:
+        TTF_DIR = str(found_dirs[0])
+        logger.info(f"Auto-detected Kaggle dataset at: {TTF_DIR}")
+    else:
+        TTF_DIR = "ttf_files"
+else:
+    TTF_DIR = "ttf_files"
 
 # IMPORTANT: BATCH_SIZE is per-core! 
 # 64 batch size * 8 cores = 512 Effective Batch Size.
