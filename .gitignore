@@ -6,7 +6,7 @@ __pycache__/
 *.pyc
 missing_family_fonts.txt
 process_fonts.py
-ttf_extractor.py
+# ttf_extractor.py
 
 # Massive Datasets & Fonts (Do not upload to GitHub!)
 synthetic_dataset/
@@ -28,7 +28,7 @@ fonts-main.zip
 
 # FAISS Databases & CSV Metadata
 *.index
-*.csv
+# *.csv
 !requirements.txt
 *.zip
 
