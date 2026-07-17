@@ -337,6 +337,12 @@ if __name__ == "__main__":
     print("Pre-downloading ConvNeXt weights to avoid XLA multiprocessing race conditions...")
     _ = timm.create_model('convnext_tiny', pretrained=True, num_classes=0)
     
+    # Kaggle injects legacy TPU environment variables that violently conflict with modern PyTorch XLA PJRT
+    if 'TPU_PROCESS_ADDRESSES' in os.environ:
+        del os.environ['TPU_PROCESS_ADDRESSES']
+    if 'TPU_NAME' in os.environ:
+        del os.environ['TPU_NAME']
+        
     flags = {}
     # Use nprocs=None (default) so PJRT automatically detects all 8 TPU cores
     xmp.spawn(_mp_fn, args=(flags,), nprocs=None, start_method='fork')
