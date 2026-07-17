@@ -220,7 +220,8 @@ def _mp_fn(index, flags):
         dataset, 
         batch_sampler=batch_sampler, 
         num_workers=4, 
-        pin_memory=False
+        pin_memory=False,
+        persistent_workers=True
     )
     
     # 3. Model & Loss Setup
@@ -326,8 +327,8 @@ def _mp_fn(index, flags):
             xm.save(checkpoint_state, "checkpoint.pth")
             xm.master_print(f"No improvement. Early stopping patience: {epochs_no_improve}/{PATIENCE}. Saved checkpoint.pth")
             
-        if epoch % 1 == 0:
-            xm.save(model.state_dict(), f'checkpoint_epoch_{epoch}.pth')
+        import sys
+        sys.stdout.flush()
             
         if epochs_no_improve >= PATIENCE:
             xm.master_print(f"Early stopping triggered after {epoch} epochs!")
