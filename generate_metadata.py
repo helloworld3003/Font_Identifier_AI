@@ -6,8 +6,8 @@ from fontTools.ttLib import TTFont
 from tqdm import tqdm
 
 # Configuration
-TTF_DIR = "ttf_files"
-OUTPUT_CSV = "fonts_metadata_2.csv"
+TTF_DIR = "ttf_files_2/ttf_files"
+OUTPUT_CSV = "fonts_metadata.csv"
 
 def get_font_metadata(font_path_str):
     """Worker function to extract metadata from a single TTF file."""

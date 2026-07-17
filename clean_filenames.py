@@ -14,7 +14,7 @@ def clean_filename(filename):
     return name + ext
 
 def main():
-    ttf_dir = Path("ttf_files")
+    ttf_dir = Path("ttf_files_2/ttf_files")
     if not ttf_dir.exists():
         print("Error: ttf_files directory not found.")
         return

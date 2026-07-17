@@ -5,7 +5,7 @@ from fontTools.ttLib import TTFont
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Configuration
-DUMP_DIR = r"E:\New folder\coding_arc\Font_Identifier_AI\ttf_files"
+DUMP_DIR = r"E:\New folder\coding_arc\Font_Identifier_AI\ttf_files_2/ttf_files"
 
 def process_single_font(filepath):
     """

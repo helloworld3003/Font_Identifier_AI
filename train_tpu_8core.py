@@ -333,5 +333,9 @@ def _mp_fn(index, flags):
     xm.master_print("Training Pipeline Complete.")
 
 if __name__ == "__main__":
+    # Pre-download ConvNeXt weights on the master thread to prevent 8-core race conditions
+    print("Pre-downloading ConvNeXt weights to avoid XLA multiprocessing race conditions...")
+    _ = timm.create_model('convnext_tiny', pretrained=True, num_classes=0)
+    
     flags = {}
     xmp.spawn(_mp_fn, args=(flags,), nprocs=8, start_method='fork')
