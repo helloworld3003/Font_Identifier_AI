@@ -10,10 +10,11 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 
-from train_virtual_epochs import ConvNeXtFontEncoder, TTF_DIR
+# Import the correct modern model architecture
+from train_tpu_8core import ConvNeXtFontEncoder, TTF_DIR
 
-# Hardcoded constraints
-EMBEDDING_SIZE = 256
+# Hardcoded constraints MUST match train_tpu_8core.py exactly
+EMBEDDING_SIZE = 512
 MODEL_PATH = "best_model.pth"
 INDEX_PATH = "font_embeddings.index"
 MAPPING_PATH = "faiss_mapping.csv"
@@ -29,24 +30,38 @@ def get_inference_transform():
         T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
     ])
 
-def render_string(ttf_path, text, canvas_size=224, font_size=60):
-    """Render canonical strings accurately."""
+def render_string(ttf_path, text, target_w=256, target_h=64, font_size=60):
+    """Render canonical strings matching the TPU training exact logic."""
     try:
         font = ImageFont.truetype(str(ttf_path), font_size)
-        image = Image.new("RGB", (canvas_size, canvas_size), "white")
-        draw = ImageDraw.Draw(image)
-
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
-
-        x = (canvas_size - text_w) / 2
-        y = (canvas_size - text_h) / 2
         
-        draw.text((x, y), text, font=font, fill="black")
-        return image
+        # Create a temporary image to measure the text bounding box
+        temp_image = Image.new("RGB", (1, 1), "white")
+        temp_draw = ImageDraw.Draw(temp_image)
+        bbox = temp_draw.textbbox((0, 0), text, font=font)
+        text_w = max(1, bbox[2] - bbox[0])
+        text_h = max(1, bbox[3] - bbox[1])
+        
+        # Render the raw text
+        image = Image.new("RGB", (text_w, text_h), "white")
+        draw = ImageDraw.Draw(image)
+        draw.text((-bbox[0], -bbox[1]), text, font=font, fill="black")
+        
+        # Scale and pad to match training exact dimensions
+        scale = min(target_w / text_w, target_h / text_h)
+        new_w = max(1, int(text_w * scale))
+        new_h = max(1, int(text_h * scale))
+        
+        image = image.resize((new_w, new_h), Image.Resampling.BILINEAR)
+        
+        final_image = Image.new("RGB", (target_w, target_h), "white")
+        x = (target_w - new_w) // 2
+        y = (target_h - new_h) // 2
+        final_image.paste(image, (x, y))
+        return final_image
     except Exception:
-        return Image.new("RGB", (canvas_size, canvas_size), "white")
+        # Fallback empty image if the font is corrupted or fails
+        return Image.new("RGB", (target_w, target_h), "white")
 
 class FontRenderDataset(Dataset):
     def __init__(self, ttf_files, transform=None):
@@ -67,7 +82,7 @@ class FontRenderDataset(Dataset):
                 tensor = torch.from_numpy(np.array(img)).permute(2, 0, 1).float() / 255.0
             tensors.append(tensor)
         
-        # Shape: (5, 3, 224, 224)
+        # Shape: (5, 3, 64, 256)
         return torch.stack(tensors), idx
 
 def build_index():
@@ -78,20 +93,33 @@ def build_index():
     model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE)
     if os.path.exists(MODEL_PATH):
         model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
+        print(f"Loaded trained weights from {MODEL_PATH}")
     else:
         print(f"Warning: {MODEL_PATH} not found. Using untrained weights for demonstration.")
     model.to(device)
     model.eval()
 
     transform = get_inference_transform()
-    ttf_files = list(Path(TTF_DIR).rglob("*.ttf"))
-    print(f"Found {len(ttf_files)} fonts to index.")
+    
+    # Support robust kaggle scanning just like the training script
+    kaggle_input_dir = Path("/kaggle/input")
+    if kaggle_input_dir.exists():
+        try:
+            first_ttf = next(kaggle_input_dir.rglob("*.ttf"))
+            ttf_dir_actual = str(first_ttf.parent)
+        except StopIteration:
+            ttf_dir_actual = TTF_DIR
+    else:
+        ttf_dir_actual = TTF_DIR
+
+    ttf_files = list(Path(ttf_dir_actual).rglob("*.ttf")) + list(Path(ttf_dir_actual).rglob("*.otf"))
+    print(f"Found {len(ttf_files)} fonts to index in {ttf_dir_actual}.")
 
     dataset = FontRenderDataset(ttf_files, transform=transform)
     dataloader = DataLoader(
         dataset,
         batch_size=32,
-        num_workers=2,
+        num_workers=4,
         pin_memory=True
     )
 
@@ -103,20 +131,20 @@ def build_index():
     # Process fonts in batches
     for batch_tensors, indices in tqdm(dataloader, desc="Extracting canonical embeddings"):
         B = batch_tensors.size(0)
-        flat_batch = batch_tensors.view(B * 5, 3, 224, 224).to(device)
+        # Reshape to push all canonical renders through the batch dimension
+        flat_batch = batch_tensors.view(B * 5, 3, 64, 256).to(device)
         
         with torch.no_grad():
-            with torch.autocast(device_type=device.type, enabled=True):
-                embeddings = model(flat_batch) # Shape: (B * 5, 256)
+            embeddings = model(flat_batch) # Shape: (B * 5, 512)
             
-            # Reshape back to (B, 5, 256)
+            # Reshape back to (B, 5, 512)
             embeddings = embeddings.view(B, 5, EMBEDDING_SIZE)
-            # Average the 5 embeddings to create a stable vector
-            avg_embeddings = torch.mean(embeddings, dim=1) # Shape: (B, 256)
-            # Re-normalize to ensure L2 norm = 1 (Cosine Similarity prerequisite)
+            # Average the 5 embeddings to create a highly stable, uniform signature vector per font
+            avg_embeddings = torch.mean(embeddings, dim=1) # Shape: (B, 512)
+            # Re-normalize to ensure L2 norm = 1 (Cosine Similarity FAISS prerequisite)
             avg_embeddings = F.normalize(avg_embeddings, p=2, dim=1)
             
-        font_vectors.append(avg_embeddings.cpu().numpy())
+        font_vectors.append(avg_embeddings.cpu().float().numpy())
         
         for idx_in_batch in range(B):
             global_idx = indices[idx_in_batch].item()
