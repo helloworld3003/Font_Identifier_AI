@@ -161,7 +161,7 @@ def run_inference(image_path, bounding_boxes):
         # Calculate confidence metric
         confidence = distances[idx][0] * 100 
         
-        match_row = mapping_df[mapping_df['faiss_id'] == top1_idx].iloc[0]
+        match_row = mapping_df.iloc[top1_idx]
         font_name = match_row['font_name']
         
         label_text = f"{font_name} ({confidence:.1f}%)"
