@@ -36,8 +36,19 @@ logger = logging.getLogger(__name__)
 kaggle_input_dir = Path("/kaggle/input")
 if kaggle_input_dir.exists():
     try:
-        first_ttf = next(kaggle_input_dir.rglob("*.ttf"))
-        TTF_DIR = str(first_ttf.parent)
+        # Prefer the exact 'ttf_files' folder to avoid mistakenly grabbing secondary datasets
+        target_dir = None
+        for d in kaggle_input_dir.rglob("ttf_files"):
+            if d.is_dir():
+                target_dir = d
+                break
+                
+        if target_dir:
+            TTF_DIR = str(target_dir)
+        else:
+            first_ttf = next(kaggle_input_dir.rglob("*.ttf"))
+            TTF_DIR = str(first_ttf.parent)
+            
         print(f"Auto-detected Kaggle dataset at: {TTF_DIR}")
     except StopIteration:
         TTF_DIR = "ttf_files"
