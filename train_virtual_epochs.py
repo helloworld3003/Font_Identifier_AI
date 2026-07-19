@@ -245,7 +245,8 @@ def train():
     dataloader = DataLoader(
         dataset, 
         batch_sampler=batch_sampler, 
-        num_workers=2, 
+        num_workers=4, # Kaggle T4x2 has 4 CPU cores, maximize them!
+        prefetch_factor=4, # Queue up more batches so the GPUs never wait
         pin_memory=True
     )
     
