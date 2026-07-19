@@ -506,7 +506,7 @@ def _mp_fn(index, flags):
             del loss
             gc.collect()
         
-        avg_loss = running_loss / (batch_idx + 1)
+        avg_loss = running_loss / (relative_batch_idx + 1)
         
         # Destroy the MpDeviceLoader to free all cached batches in TPU RAM
         del mp_device_loader
