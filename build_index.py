@@ -13,8 +13,21 @@ from torch.utils.data import Dataset, DataLoader
 
 # Import the correct modern model architecture
 from model import ConvNeXtFontEncoder
-# Check if running on Kaggle and auto-mount the dataset to prevent symlink errors
-from pathlib import Path
+
+# ==========================================
+# 1. HARDCODED CONFIGURATION
+# ==========================================
+EMBEDDING_SIZE = 512
+MODEL_PATH = "best_model.pth"
+INDEX_PATH = "font_embeddings.index"
+MAPPING_PATH = "faiss_mapping.csv"
+CHUNK_SIZE = 10000 # Save embeddings to disk every 10,000 fonts to prevent RAM OOM
+
+CANONICAL_STRINGS = ["AaBbCc", "xyz123", "0OIl", "gjpqy", "Test 00"]
+
+# ==========================================
+# 2. DATASET ROBUST KAGGLE AUTO-DETECT
+# ==========================================
 kaggle_input_dir = Path("/kaggle/input")
 if kaggle_input_dir.exists():
     try:
@@ -28,68 +41,50 @@ if kaggle_input_dir.exists():
         else:
             first_ttf = next(kaggle_input_dir.rglob("*.ttf"))
             TTF_DIR = str(first_ttf.parent)
-        print(f"Auto-detected Kaggle dataset at: {TTF_DIR}")
     except StopIteration:
         TTF_DIR = "ttf_files"
 else:
     TTF_DIR = "ttf_files"
 
-# Hardcoded constraints MUST match train_tpu_8core.py exactly
-EMBEDDING_SIZE = 512
-MODEL_PATH = "best_model.pth"
-INDEX_PATH = "font_embeddings.index"
-MAPPING_PATH = "faiss_mapping.csv"
-
-# Canonical Renders
-CANONICAL_STRINGS = ["AaBbCc", "xyz123", "0OIl", "gjpqy", "Test 00"]
-
+# ==========================================
+# 3. UTILITIES
+# ==========================================
 def get_inference_transform():
-    # Only normalize, no augmentation for clean canonical renders
-    # Since these are synthetic internal renders, they are already perfectly clean.
     return T.Compose([
         T.ToTensor(),
         T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
     ])
 
 def render_string(ttf_path, text, target_w=256, target_h=64, font_size=60):
-    """Render canonical strings matching the TPU training exact logic."""
     try:
         font = ImageFont.truetype(str(ttf_path), font_size)
-        
-        # Create a temporary image to measure the text bounding box
         temp_image = Image.new("RGB", (1, 1), "white")
         temp_draw = ImageDraw.Draw(temp_image)
         bbox = temp_draw.textbbox((0, 0), text, font=font)
         text_w = max(1, bbox[2] - bbox[0])
         text_h = max(1, bbox[3] - bbox[1])
         
-        # Render the raw text
         image = Image.new("RGB", (text_w, text_h), "white")
         draw = ImageDraw.Draw(image)
         draw.text((-bbox[0], -bbox[1]), text, font=font, fill="black")
         
-        # Scale and pad to match training exact dimensions
         scale = min(target_w / text_w, target_h / text_h)
         new_w = max(1, int(text_w * scale))
         new_h = max(1, int(text_h * scale))
         
         image = image.resize((new_w, new_h), Image.Resampling.BILINEAR)
-        
         final_image = Image.new("RGB", (target_w, target_h), "white")
         x = (target_w - new_w) // 2
         y = (target_h - new_h) // 2
         final_image.paste(image, (x, y))
         
-        # Explicitly clean up C-level Pillow resources to prevent memory leaks!
         del draw
         del temp_draw
         del font
         del temp_image
         del image
-        
         return final_image
     except Exception:
-        # Fallback empty image if the font is corrupted or fails
         return Image.new("RGB", (target_w, target_h), "white")
 
 class FontRenderDataset(Dataset):
@@ -111,93 +106,135 @@ class FontRenderDataset(Dataset):
                 tensor = torch.from_numpy(np.array(img)).permute(2, 0, 1).float() / 255.0
             tensors.append(tensor)
         
-        # Shape: (5, 3, 64, 256)
         return torch.stack(tensors), idx
 
+# ==========================================
+# 4. CHUNKED FAISS BUILDER
+# ==========================================
 def build_index():
+    print("=" * 60)
+    print("STARTING ROBUST T4 GPU CHUNKED INDEX BUILDER")
+    print("=" * 60)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+    
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = True # Extreme speedhack for static shapes
 
-    # Load ConvNeXt Model
     model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE)
     if os.path.exists(MODEL_PATH):
         model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
         print(f"Loaded trained weights from {MODEL_PATH}")
-    else:
-        print(f"Warning: {MODEL_PATH} not found. Using untrained weights for demonstration.")
     
-    # DO NOT use DataParallel! PyTorch DataParallel uses CPU threads to scatter/gather batches,
-    # which notoriously leaks massive amounts of CPU RAM on Kaggle over thousands of batches!
-    # A single T4 GPU is fast enough for inference.
+    # Strictly bind to single GPU to absolutely prevent scatter/gather thread leaks
     model.to(device)
     model.eval()
 
     transform = get_inference_transform()
     
-    ttf_dir_actual = TTF_DIR
-    
-    print(f"Scanning for font files in {ttf_dir_actual}... (This may take a minute for 185,000+ files)")
-    ttf_files = list(Path(ttf_dir_actual).rglob("*.ttf")) + list(Path(ttf_dir_actual).rglob("*.otf"))
-    print(f"Found {len(ttf_files)} fonts to index in {ttf_dir_actual}.")
+    print(f"\nScanning for font files in {TTF_DIR}...")
+    ttf_files = list(Path(TTF_DIR).rglob("*.ttf")) + list(Path(TTF_DIR).rglob("*.otf"))
+    total_fonts = len(ttf_files)
+    print(f"Found {total_fonts} fonts to index.")
 
-    dataset = FontRenderDataset(ttf_files, transform=transform)
-    dataloader = DataLoader(
-        dataset,
-        batch_size=32, # Drastically reduced to prevent CPU RAM fragmentation
-        num_workers=0,  # CRITICAL: Kaggle CANNOT handle background TTF rendering. Must be 0.
-        pin_memory=False # CRITICAL: pin_memory=True consumes too much host RAM and causes OOM.
-    )
-
-    # Initialize FAISS Index (Inner Product for Cosine Similarity since vectors are L2 normalized)
-    index = faiss.IndexFlatIP(EMBEDDING_SIZE)
-    mapping_data = []
-    font_vectors = []
+    # Prepare temp directory for chunks
+    os.makedirs("faiss_chunks", exist_ok=True)
     
-    # Process fonts in batches
-    for batch_tensors, indices in tqdm(dataloader, desc="Extracting canonical embeddings"):
-        B = batch_tensors.size(0)
-        # Reshape to push all canonical renders through the batch dimension
-        flat_batch = batch_tensors.view(B * 5, 3, 64, 256).to(device)
+    # Process strictly in chunks
+    chunk_paths = []
+    
+    for chunk_idx in range(0, total_fonts, CHUNK_SIZE):
+        chunk_files = ttf_files[chunk_idx:chunk_idx+CHUNK_SIZE]
+        print(f"\n--- Processing Chunk {chunk_idx // CHUNK_SIZE + 1} (Fonts {chunk_idx} to {chunk_idx+len(chunk_files)}) ---")
         
-        with torch.no_grad():
-            embeddings = model(flat_batch) # Shape: (B * 5, 512)
+        dataset = FontRenderDataset(chunk_files, transform=transform)
+        dataloader = DataLoader(
+            dataset,
+            batch_size=128, 
+            num_workers=0, # Physically prevent multiprocessing leaks
+            pin_memory=False
+        )
+
+        chunk_vectors = []
+        chunk_mapping = []
+
+        for batch_tensors, indices in tqdm(dataloader, desc="Extracting chunk"):
+            B = batch_tensors.size(0)
+            flat_batch = batch_tensors.view(B * 5, 3, 64, 256).to(device)
             
-            # Reshape back to (B, 5, 512)
-            embeddings = embeddings.view(B, 5, EMBEDDING_SIZE)
-            # Average the 5 embeddings to create a highly stable, uniform signature vector per font
-            avg_embeddings = torch.mean(embeddings, dim=1) # Shape: (B, 512)
-            # Re-normalize to ensure L2 norm = 1 (Cosine Similarity FAISS prerequisite)
-            avg_embeddings = F.normalize(avg_embeddings, p=2, dim=1)
+            with torch.no_grad():
+                embeddings = model(flat_batch) 
+                embeddings = embeddings.view(B, 5, EMBEDDING_SIZE)
+                avg_embeddings = torch.mean(embeddings, dim=1) 
+                avg_embeddings = F.normalize(avg_embeddings, p=2, dim=1)
+                
+            chunk_vectors.append(avg_embeddings.cpu().float().numpy())
             
-        font_vectors.append(avg_embeddings.cpu().float().numpy())
-        
-        for idx_in_batch in range(B):
-            global_idx = indices[idx_in_batch].item()
-            ttf_path = ttf_files[global_idx]
-            mapping_data.append({
-                "faiss_id": global_idx, 
-                "font_path": str(ttf_path), 
-                "font_name": ttf_path.stem
-            })
-            
-        # Force garbage collection every batch to physically purge RAM
-        if B > 0:
+            for idx_in_batch in range(B):
+                local_idx = indices[idx_in_batch].item()
+                global_idx = chunk_idx + local_idx
+                ttf_path = chunk_files[local_idx]
+                chunk_mapping.append({
+                    "faiss_id": global_idx, 
+                    "font_path": str(ttf_path), 
+                    "font_name": ttf_path.stem
+                })
+                
+            # Physically purge Python garbage collector
+            del flat_batch
+            del batch_tensors
+            del embeddings
+            del avg_embeddings
             gc.collect()
 
-    # Ingest into FAISS
-    vectors_np = np.vstack(font_vectors).astype('float32')
-    index.add(vectors_np)
+        # Save this chunk immediately to disk to prevent RAM bloat
+        vectors_np = np.vstack(chunk_vectors).astype('float32')
+        chunk_npy_path = f"faiss_chunks/vectors_{chunk_idx}.npy"
+        chunk_csv_path = f"faiss_chunks/mapping_{chunk_idx}.csv"
+        
+        np.save(chunk_npy_path, vectors_np)
+        pd.DataFrame(chunk_mapping).to_csv(chunk_csv_path, index=False)
+        chunk_paths.append((chunk_npy_path, chunk_csv_path))
+        
+        # Purge entire chunk from RAM
+        del vectors_np
+        del chunk_vectors
+        del chunk_mapping
+        del dataset
+        del dataloader
+        torch.cuda.empty_cache()
+        gc.collect()
+        
+        print(f"Chunk flushed safely to disk. RAM wiped.")
+
+    print("\n" + "=" * 60)
+    print("ALL CHUNKS PROCESSED. ASSEMBLING FINAL FAISS INDEX...")
     
-    # Save Index
+    # Initialize FAISS Index
+    index = faiss.IndexFlatIP(EMBEDDING_SIZE)
+    all_mapping = []
+    
+    # Load chunks one by one to assemble FAISS
+    for npy_path, csv_path in tqdm(chunk_paths, desc="Assembling Index"):
+        vectors_np = np.load(npy_path)
+        index.add(vectors_np)
+        
+        chunk_df = pd.read_csv(csv_path)
+        all_mapping.append(chunk_df)
+        
+        # Purge loaded array
+        del vectors_np
+        del chunk_df
+        gc.collect()
+        
     faiss.write_index(index, INDEX_PATH)
-    print(f"Successfully saved FAISS index to {INDEX_PATH}")
+    final_df = pd.concat(all_mapping, ignore_index=True)
+    final_df.to_csv(MAPPING_PATH, index=False)
     
-    # Save Metadata Mapping
-    df = pd.DataFrame(mapping_data)
-    df.to_csv(MAPPING_PATH, index=False)
-    print(f"Successfully saved metadata mapping to {MAPPING_PATH}")
+    print(f"SUCCESS! Robust FAISS index saved to {INDEX_PATH}")
+    print(f"SUCCESS! Metadata mapping saved to {MAPPING_PATH}")
+    print("=" * 60)
 
 if __name__ == "__main__":
     build_index()
