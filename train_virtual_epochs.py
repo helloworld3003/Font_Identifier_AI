@@ -20,6 +20,9 @@ cv2.ocl.setUseOpenCL(False)
 
 from torch.utils.data import Dataset, DataLoader, Sampler
 
+# EXTREME GPU OPTIMIZATION: Enable cuDNN Auto-Tuner to find the absolute fastest convolution algorithms
+torch.backends.cudnn.benchmark = True
+
 import numpy as np
 import timm
 import albumentations as A
@@ -83,7 +86,10 @@ def get_train_transforms():
         A.Perspective(scale=(0.05, 0.09), p=0.3),
         A.GaussianBlur(blur_limit=(3, 5), p=0.3),
         
-        A.Lambda(image=simulate_adaptive_threshold, p=0.4),
+        # EXTREME GPU OPTIMIZATION: Disabled simulate_adaptive_threshold because cv2.adaptiveThreshold 
+        # is single-threaded and severely bottlenecks the CPU from feeding the GPUs fast enough.
+        # A.Lambda(image=simulate_adaptive_threshold, p=0.4),
+        
         A.InvertImg(p=0.2), # Handles white-on-black text styles
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ToTensorV2()
@@ -326,7 +332,9 @@ def train():
         
         pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{MAX_EPOCHS}", total=VIRTUAL_EPOCH_BATCHES)
         for batch_idx, (images, labels) in enumerate(pbar):
-            images, labels = images.to(device), labels.to(device).long()
+            # EXTREME GPU OPTIMIZATION: non_blocking=True allows the CPU to asynchronously push memory to the GPU in the background!
+            images = images.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True).long()
             
             optimizer.zero_grad()
             
