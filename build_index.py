@@ -195,8 +195,16 @@ def build_index_orchestrator():
     all_files = list(Path(TTF_DIR).rglob("*.ttf")) + list(Path(TTF_DIR).rglob("*.otf"))
     
     print("Validating font headers to prevent C-level Segmentation Faults...")
+    
+    blacklist = set()
+    if os.path.exists("bomb_blacklist.txt"):
+        with open("bomb_blacklist.txt", "r") as f:
+            blacklist = set([line.strip() for line in f.readlines()])
+            
     ttf_files = []
     for f in all_files:
+        if str(f) in blacklist:
+            continue
         try:
             if os.path.getsize(f) > 1024:
                 with open(f, 'rb') as file:

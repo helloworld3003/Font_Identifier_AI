@@ -160,6 +160,14 @@ class VirtualEpochBatchSampler(Sampler):
 class DynamicFontDataset(Dataset):
     def __init__(self, ttf_dir, transform=None):
         self.ttf_files = list(Path(ttf_dir).rglob("*.ttf")) + list(Path(ttf_dir).rglob("*.otf"))
+        
+        # Filter out Font Decompression Bombs
+        blacklist = set()
+        if os.path.exists("bomb_blacklist.txt"):
+            with open("bomb_blacklist.txt", "r") as f:
+                blacklist = set([line.strip() for line in f.readlines()])
+        self.ttf_files = [f for f in self.ttf_files if str(f) not in blacklist]
+        
         if len(self.ttf_files) == 0:
             raise ValueError(f"No font files found in {ttf_dir}")
         self.transform = transform

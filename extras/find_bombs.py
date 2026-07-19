@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw, ImageFont
 # Configuration
 PROGRESS_FILE = "bomb_hunter_progress.txt"
 CURRENT_FILE = "bomb_hunter_current.txt"
+BLACKLIST_FILE = "bomb_blacklist.txt"
 
 def main():
     print("==================================================")
@@ -29,7 +30,6 @@ def main():
         except StopIteration:
             TTF_DIR = "ttf_files"
     else:
-        # Default fallback for local testing
         TTF_DIR = r"E:\New folder\coding_arc\Font_Identifier_AI\ttf_files_2\ttf_files"
         
     print(f"Scanning directory: {TTF_DIR}")
@@ -38,14 +38,23 @@ def main():
         print("ERROR: TTF directory not found!")
         sys.exit(0)
         
-    # Gather and SORT files (sorting is critical for deterministic checkpointing)
+    # Gather and SORT files
     all_files = list(Path(TTF_DIR).rglob("*.ttf")) + list(Path(TTF_DIR).rglob("*.otf"))
     all_files.sort()
     
     total_fonts = len(all_files)
     print(f"Found {total_fonts} total font files.")
     
-    # 2. Check for Death Checkpoint (Did we die last run?)
+    # Read current progress
+    start_idx = 0
+    if os.path.exists(PROGRESS_FILE):
+        with open(PROGRESS_FILE, "r") as f:
+            try:
+                start_idx = int(f.read().strip())
+            except ValueError:
+                start_idx = 0
+
+    # 2. Check for Death Checkpoint
     if os.path.exists(CURRENT_FILE):
         with open(CURRENT_FILE, "r") as f:
             bomb_path = f.read().strip()
@@ -55,24 +64,18 @@ def main():
         print(f"Malicious Font: {bomb_path}")
         print("!" * 50)
         
-        try:
-            os.remove(bomb_path)
-            print(f"-> Successfully DELETED {bomb_path} forever!")
-        except Exception as e:
-            print(f"-> Failed to delete (maybe already gone or read-only): {e}")
+        # Kaggle input is read-only. We must append to a blacklist instead of deleting.
+        with open(BLACKLIST_FILE, "a") as bf:
+            bf.write(bomb_path + "\n")
+        print(f"-> Added {Path(bomb_path).name} to {BLACKLIST_FILE}!")
+        
+        # Skip this bomb so we don't infinitely crash on it
+        start_idx += 1
+        with open(PROGRESS_FILE, "w") as f:
+            f.write(str(start_idx))
             
-        # Clear the death marker
         os.remove(CURRENT_FILE)
         print("Resuming hunt...\n")
-
-    # 3. Read Progress Checkpoint
-    start_idx = 0
-    if os.path.exists(PROGRESS_FILE):
-        with open(PROGRESS_FILE, "r") as f:
-            try:
-                start_idx = int(f.read().strip())
-            except ValueError:
-                start_idx = 0
                 
     if start_idx >= total_fonts:
         print("🎉 HUNT COMPLETE! All fonts verified clean. 🎉")
@@ -88,30 +91,24 @@ def main():
         # WRITE DEATH MARKER BEFORE DOING ANYTHING DANGEROUS
         with open(CURRENT_FILE, "w") as f:
             f.write(str(font_path))
-            
-        # Force flush to disk to guarantee survival of the marker
-        os.fsync(f.fileno() if not f.closed else 0) # Ignored if already flushed
+            f.flush()
+            os.fsync(f.fileno()) 
 
         # DANGEROUS ZONE: Attempt to render the font
         try:
-            # We use a large font size to immediately trigger the bomb
             font = ImageFont.truetype(str(font_path), 120)
             img = Image.new("RGB", (1000, 1000), "white")
             draw = ImageDraw.Draw(img)
             draw.text((10, 10), "AaBbCc0123", font=font, fill="black")
             
-            # Explicit cleanup
             del draw
             del font
             del img
             
         except Exception as e:
-            # Normal python exceptions (e.g. font format invalid) are caught here.
-            # We don't delete them, just ignore them.
             pass
             
-        # If we reached here, the font did NOT trigger an OOM SIGKILL (-9).
-        # It is safe. We delete the death marker.
+        # Survived! Delete death marker
         os.remove(CURRENT_FILE)
         
         # Save progress
