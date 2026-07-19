@@ -4,6 +4,12 @@ An ultra-scale Computer Vision pipeline designed to identify the exact typograph
 
 Built using PyTorch Metric Learning, the state-of-the-art **ConvNeXt-Tiny** backbone, and FAISS (Facebook AI Similarity Search), this architecture extracts 256-dimensional embeddings from fonts and places them onto a unit hypersphere. By leveraging Dynamic RAM Rendering, Cross-Batch Memory, and Adaptive Inference Binarization, it delivers pristine Train/Test symmetry and absolute gold-standard accuracy.
 
+## Dataset
+
+The model is trained on a massive, combined dataset of approximately 185,700 fonts:
+- **Free Fonts:** 69,700 `.ttf` files scraped from public repositories including 1001 Fonts and Google Fonts.
+- **Premium Fonts:** 116,000 `.ttf` files obtained from a comprehensive typography data leak.
+
 ## System Architecture
 
 Because generating static images for 100,000+ fonts creates a severe I/O bottleneck and disk failure risk, this pipeline entirely relies on **Dynamic RAM Rendering**.
