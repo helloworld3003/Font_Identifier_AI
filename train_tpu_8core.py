@@ -219,9 +219,12 @@ class DynamicFontDataset(Dataset):
         if self.transform:
             augmented = self.transform(image=image_np)
             image_tensor = augmented['image']
+            del augmented
         else:
             image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).float() / 255.0
 
+        del image_np
+        del final_image
         return image_tensor, idx
 
 # ==========================================
@@ -355,6 +358,10 @@ def _mp_fn(index, flags):
             gc.collect()
         
         avg_loss = running_loss / (batch_idx + 1)
+        
+        # Destroy the MpDeviceLoader to free all cached batches in TPU RAM
+        del mp_device_loader
+        gc.collect()
         
         # CRITICAL XLA FIX: We MUST synchronize the average loss across all 8 cores!
         # If we don't, each core will have a slightly different loss, causing them to diverge at the 
