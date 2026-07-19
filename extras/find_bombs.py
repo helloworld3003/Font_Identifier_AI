@@ -31,7 +31,14 @@ def worker_fn(worker_id, chunk_files):
         start_idx += 1
         with open(PROGRESS_FILE, "w") as f:
             f.write(str(start_idx))
-        os.remove(CURRENT_FILE)
+            
+        for _ in range(10):
+            try:
+                if os.path.exists(CURRENT_FILE):
+                    os.remove(CURRENT_FILE)
+                break
+            except Exception:
+                time.sleep(0.01)
     else:
         # Normal resume
         if os.path.exists(PROGRESS_FILE):
@@ -62,7 +69,13 @@ def worker_fn(worker_id, chunk_files):
             pass
             
         # Survived! Delete death marker
-        os.remove(CURRENT_FILE)
+        for _ in range(10):
+            try:
+                if os.path.exists(CURRENT_FILE):
+                    os.remove(CURRENT_FILE)
+                break
+            except Exception:
+                time.sleep(0.01)
         
         # Save progress
         with open(PROGRESS_FILE, "w") as f:
