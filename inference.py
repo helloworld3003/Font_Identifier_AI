@@ -103,6 +103,11 @@ def resolve_local_font_path(kaggle_path):
             return str(p)
     return None
 
+def format_font_name(row):
+    if 'full_name' in row and pd.notna(row['full_name']) and row['full_name'] != "Unknown":
+        return f"{row['full_name']} (Family: {row['font_family']})"
+    return row['font_name']
+
 # ==========================================
 # 3. CORE INFERENCE LOGIC
 # ==========================================
@@ -153,7 +158,8 @@ class FontIdentifier:
         
         for idx, bbox in enumerate(valid_bboxes):
             print(f"\n--- Detected Text Region {bbox} ---")
-            best_name = self.mapping_df.iloc[indices[idx][0]]['font_name']
+            best_row = self.mapping_df.iloc[indices[idx][0]]
+            best_name = format_font_name(best_row)
             best_conf = ((distances[idx][0] + 1) / 2) * 100
             draw_label(draw, bbox, f"{best_name} ({best_conf:.1f}%)")
             
@@ -195,8 +201,9 @@ class FontIdentifier:
             y_cursor = row_h
             for i in range(top_k):
                 confidence = ((distances[idx][i] + 1) / 2) * 100
-                font_name = self.mapping_df.iloc[indices[idx][i]]['font_name']
-                font_path = self.mapping_df.iloc[indices[idx][i]]['font_path']
+                match_row = self.mapping_df.iloc[indices[idx][i]]
+                font_name = format_font_name(match_row)
+                font_path = match_row['font_path']
                 local_path = resolve_local_font_path(font_path)
                 
                 title = f"MATCH #{i+1} ({confidence:.2f}%): {font_name}"
@@ -281,7 +288,8 @@ class FontIdentifier:
             confidence = ((score + 1) / 2) * 100
             local_path = resolve_local_font_path(match_row['font_path'])
             
-            title = f"MATCH #{drawn_count + 1} ({confidence:.2f}%): {match_row['font_name']}"
+            font_name = format_font_name(match_row)
+            title = f"MATCH #{drawn_count + 1} ({confidence:.2f}%): {font_name}"
             if not local_path:
                 title += " [TTF NOT FOUND LOCALLY]"
                 
