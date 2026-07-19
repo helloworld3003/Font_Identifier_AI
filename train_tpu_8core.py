@@ -307,16 +307,16 @@ def _mp_fn(index, flags):
         if avg_loss < best_loss:
             best_loss = avg_loss
             epochs_no_improve = 0
-            xm.save(model.state_dict(), "best_model.pth")
+            xm.save(model.state_dict(), MODEL_PATH)
             
             checkpoint_state['best_loss'] = best_loss
             checkpoint_state['epochs_no_improve'] = epochs_no_improve
-            xm.save(checkpoint_state, "checkpoint.pth")
+            xm.save(checkpoint_state, CHECKPOINT_PATH)
             xm.master_print(f"New best loss achieved! Saved best_model.pth and checkpoint.pth")
         else:
             epochs_no_improve += 1
             checkpoint_state['epochs_no_improve'] = epochs_no_improve
-            xm.save(checkpoint_state, "checkpoint.pth")
+            xm.save(checkpoint_state, CHECKPOINT_PATH)
             xm.master_print(f"No improvement. Early stopping patience: {epochs_no_improve}/{PATIENCE}. Saved checkpoint.pth")
             
         import sys
