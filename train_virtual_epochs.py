@@ -58,7 +58,7 @@ logger.info(f"Auto-detected Kaggle dataset at: {TTF_DIR}")
 BATCH_SIZE = 1024 # Doubled to maximize T4 VRAM and minimize PCIe overhead
 M_PER_CLASS = 4
 EMBEDDING_SIZE = 512
-VIRTUAL_EPOCH_BATCHES = 1250
+VIRTUAL_EPOCH_BATCHES = 625 # Halved from 1250 because batch size was doubled, keeps epoch time consistent!
 MAX_EPOCHS = 50
 LEARNING_RATE_BACKBONE = 2e-5
 LEARNING_RATE_HEAD = 5e-4
