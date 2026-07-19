@@ -234,8 +234,9 @@ def _mp_fn(index, flags):
     epochs_no_improve = 0
     start_epoch = 1
     
-    CHECKPOINT_PATH = "checkpoint.pth"
-    MODEL_PATH = "best_model.pth"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    CHECKPOINT_PATH = os.path.join(script_dir, "checkpoint.pth")
+    MODEL_PATH = os.path.join(script_dir, "best_model.pth")
     
     if os.path.exists(CHECKPOINT_PATH):
         xm.master_print(f"Found checkpoint file '{CHECKPOINT_PATH}'. Resuming training...")
