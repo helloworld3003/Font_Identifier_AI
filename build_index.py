@@ -231,23 +231,33 @@ def build_index_orchestrator():
         chunk_npy_path = f"faiss_chunks/vectors_{chunk_idx}.npy"
         chunk_csv_path = f"faiss_chunks/mapping_{chunk_idx}.csv"
         
-        print(f"\n--- Orchestrator: Spawning Isolated Worker for Chunk {chunk_idx // CHUNK_SIZE + 1} ---")
+        chunk_number = chunk_idx // CHUNK_SIZE + 1
+        success = False
+        retries = 0
+        MAX_RETRIES = 10
         
-        # Spawn an entirely isolated Python process
-        p = mp.Process(target=process_chunk_worker, args=(chunk_idx, chunk_files, chunk_npy_path, chunk_csv_path))
-        p.start()
-        p.join() # The orchestrator waits safely while the worker takes the bullet
-        
-        if p.exitcode != 0:
-            print(f"WARNING: Subprocess {chunk_idx // CHUNK_SIZE + 1} terminated with abnormal exit code: {p.exitcode}")
-            if p.exitcode == -11:
-                print(">>> This was a Segmentation Fault caused by a malicious font file in the data leak! The worker took the hit, but the main orchestrator survives.")
-            # We still append the chunk paths, in case it managed to save before dying, or just skip it if files don't exist
+        while not success and retries < MAX_RETRIES:
+            print(f"\n--- Orchestrator: Spawning Isolated Worker for Chunk {chunk_number} (Attempt {retries + 1}/{MAX_RETRIES}) ---")
             
-        if os.path.exists(chunk_npy_path) and os.path.exists(chunk_csv_path):
-            chunk_paths.append((chunk_npy_path, chunk_csv_path))
-        else:
-            print(f"ERROR: Chunk {chunk_idx // CHUNK_SIZE + 1} failed to write files. It will be skipped from the final FAISS index.")
+            # Spawn an entirely isolated Python process
+            p = mp.Process(target=process_chunk_worker, args=(chunk_idx, chunk_files, chunk_npy_path, chunk_csv_path))
+            p.start()
+            p.join() # The orchestrator waits safely while the worker takes the bullet
+            
+            if p.exitcode != 0:
+                print(f"WARNING: Subprocess {chunk_number} terminated with abnormal exit code: {p.exitcode}")
+                if p.exitcode == -11:
+                    print(">>> This was a Segmentation Fault caused by a malicious font file! The worker took the hit, but the main orchestrator survives.")
+                
+            if os.path.exists(chunk_npy_path) and os.path.exists(chunk_csv_path):
+                chunk_paths.append((chunk_npy_path, chunk_csv_path))
+                success = True
+            else:
+                retries += 1
+                if retries < MAX_RETRIES:
+                    print(f"ERROR: Chunk {chunk_number} failed to write files. Retrying immediately...")
+                else:
+                    print(f"CRITICAL ERROR: Chunk {chunk_number} failed {MAX_RETRIES} consecutive times! Skipping permanently to prevent an infinite Kaggle loop.")
 
     print("\n" + "=" * 60)
     print("ALL CHUNKS PROCESSED. ASSEMBLING FINAL FAISS INDEX...")
