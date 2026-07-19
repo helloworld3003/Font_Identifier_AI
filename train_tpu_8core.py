@@ -219,6 +219,7 @@ class DynamicFontDataset(Dataset):
             
             final_image = Image.new("RGB", (target_w, target_h), "white")
             x = (target_w - new_w) // 2
+            y = (target_h - new_h) // 2
             final_image.paste(image, (x, y))
             
             # Explicitly clean up C-level Pillow resources to prevent memory leaks!
