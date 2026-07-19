@@ -129,17 +129,9 @@ def build_index():
 
     transform = get_inference_transform()
     
-    # Support robust kaggle scanning just like the training script
-    kaggle_input_dir = Path("/kaggle/input")
-    if kaggle_input_dir.exists():
-        try:
-            first_ttf = next(kaggle_input_dir.rglob("*.ttf"))
-            ttf_dir_actual = str(first_ttf.parent)
-        except StopIteration:
-            ttf_dir_actual = TTF_DIR
-    else:
-        ttf_dir_actual = TTF_DIR
-
+    ttf_dir_actual = TTF_DIR
+    
+    print(f"Scanning for font files in {ttf_dir_actual}... (This may take a minute for 185,000+ files)")
     ttf_files = list(Path(ttf_dir_actual).rglob("*.ttf")) + list(Path(ttf_dir_actual).rglob("*.otf"))
     print(f"Found {len(ttf_files)} fonts to index in {ttf_dir_actual}.")
 
