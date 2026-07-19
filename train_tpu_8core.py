@@ -33,25 +33,40 @@ import torch_xla.distributed.xla_multiprocessing as xmp
 logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+import math
+
 # ==========================================
 # STATIC XLA LOSS IMPLEMENTATION
 # ==========================================
-class StaticSupConLoss(nn.Module):
+class ArcFaceSupConLoss(nn.Module):
     """
-    XLA-Friendly Supervised Contrastive Loss.
-    Uses pure matrix multiplication and binary masking (no boolean indexing) 
-    to guarantee a strictly static computation graph for TPUs.
+    XLA-Friendly ArcFace Supervised Contrastive Loss.
+    Combines the global pairwise structure of SupCon with the strict mathematical 
+    angular margin penalty of ArcFace. Forces a strict geometric margin between 
+    highly similar font clusters, making the task significantly harder and preventing 
+    the network from plateauing on superficial features.
     """
-    def __init__(self, temperature=0.1):
-        super(StaticSupConLoss, self).__init__()
-        self.temperature = temperature
+    def __init__(self, scale=30.0, margin=0.50):
+        super(ArcFaceSupConLoss, self).__init__()
+        self.scale = scale
+        self.margin = margin
+        self.cos_m = math.cos(margin)
+        self.sin_m = math.sin(margin)
+        # Threshold for numerical stability
+        self.th = math.cos(math.pi - margin)
+        self.mm = math.sin(math.pi - margin) * margin
 
     def forward(self, features, labels):
         features = F.normalize(features, p=2, dim=1)
         batch_size = features.shape[0]
         
-        # Static Matrix Multiplication (B x B)
-        similarity_matrix = torch.matmul(features, features.T) / self.temperature
+        # Static Matrix Multiplication (B x B) -> Cosine Similarities
+        cosine = torch.matmul(features, features.T)
+        
+        # Apply ArcFace margin to positive pairs using trig identities (XLA safe)
+        sine = torch.sqrt(1.0 - torch.pow(cosine, 2).clamp(0, 1) + 1e-9)
+        phi = cosine * self.cos_m - sine * self.sin_m
+        phi = torch.where(cosine > self.th, phi, cosine - self.mm)
         
         # Static Binary Mask (1 for same class, 0 for different)
         labels = labels.contiguous().view(-1, 1)
@@ -65,6 +80,12 @@ class StaticSupConLoss(nn.Module):
             0
         )
         mask = mask * logits_mask
+        
+        # For positive pairs, use penalized phi. For negative pairs, use standard cosine.
+        similarity_matrix = (mask * phi) + ((1.0 - mask) * cosine)
+        
+        # Scale the matrix (equivalent to 1 / temperature)
+        similarity_matrix = similarity_matrix * self.scale
         
         # Numerical stability for exp
         exp_logits = torch.exp(similarity_matrix) * logits_mask
@@ -300,9 +321,9 @@ def _mp_fn(index, flags):
     # XLA CRITICAL FIX: The PyTorch Metric Learning library uses boolean indexing to dynamically 
     # extract pairs/triplets. This forced PyTorch XLA to invoke the C++ compiler every single batch,
     # causing a 300GB RAM explosion and instantaneous system death.
-    # By using our custom StaticSupConLoss, the similarity matrix is strictly 64x64 forever,
+    # By using our custom ArcFaceSupConLoss, the similarity matrix is strictly 512x512 forever,
     # resulting in exactly 1 compile step and zero memory leaks!
-    loss_func = StaticSupConLoss(temperature=0.1).to(device)
+    loss_func = ArcFaceSupConLoss(scale=30.0, margin=0.50).to(device)
     
     # 4. Optimizer Setup
     param_groups = [
