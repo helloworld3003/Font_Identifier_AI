@@ -261,8 +261,7 @@ def _mp_fn(index, flags):
         batch_sampler=batch_sampler, 
         num_workers=2, 
         persistent_workers=True, # Keep workers alive to prevent RAM spikes between epochs
-        pin_memory=False, # pin_memory is only for CUDA GPUs, it causes memory leaks on TPUs!
-        drop_last=True # Required for TPUs to prevent dynamic shape recompilation!
+        pin_memory=False # pin_memory is only for CUDA GPUs, it causes memory leaks on TPUs!
     )
     
     # 3. Model & Loss Setup
