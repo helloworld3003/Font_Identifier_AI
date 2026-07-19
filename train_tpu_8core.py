@@ -310,6 +310,14 @@ def _mp_fn(index, flags):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     CHECKPOINT_PATH = os.path.join(script_dir, "checkpoint.pth")
     MODEL_PATH = os.path.join(script_dir, "best_model.pth")
+    LOG_CSV_PATH = os.path.join(script_dir, "training_log.csv")
+    
+    import csv
+    if xm.is_master_ordinal():
+        if not os.path.exists(LOG_CSV_PATH):
+            with open(LOG_CSV_PATH, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["epoch", "batch", "loss", "timestamp"])
     
     if not os.path.exists(CHECKPOINT_PATH):
         raise FileNotFoundError(f"CRITICAL ERROR: Checkpoint file '{CHECKPOINT_PATH}' was not found! The script is configured to STRICTLY require checkpoint.pth to proceed.")
@@ -359,7 +367,11 @@ def _mp_fn(index, flags):
             
             if (batch_idx + 1) % 100 == 0:
                 xm.master_print(f"Epoch {epoch}/{MAX_EPOCHS} | Batch {batch_idx + 1}/{VIRTUAL_EPOCH_BATCHES} | Loss: {current_loss:.4f}")
-                
+                if xm.is_master_ordinal():
+                    with open(LOG_CSV_PATH, 'a', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow([epoch, batch_idx + 1, f"{current_loss:.4f}", time.time()])
+                        
             # Physically purge Python garbage collector
             del images
             del labels
@@ -383,6 +395,11 @@ def _mp_fn(index, flags):
         
         xm.master_print(f"=== Epoch {epoch} Summary ===")
         xm.master_print(f"Average Loss: {avg_loss:.4f} | Time: {epoch_time:.2f}s | LR: {scheduler.get_last_lr()[0]:.6f}")
+        
+        if xm.is_master_ordinal():
+            with open(LOG_CSV_PATH, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([epoch, "EPOCH_SUMMARY", f"{avg_loss:.4f}", time.time()])
         
         # Save complete training state (Must be executed by all cores, but xm.save manages writing safely)
         checkpoint_state = {
