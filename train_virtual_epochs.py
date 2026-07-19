@@ -55,7 +55,7 @@ for search_dir in ["/kaggle/input", "/kaggle/working"]:
         break
         
 logger.info(f"Auto-detected Kaggle dataset at: {TTF_DIR}")
-BATCH_SIZE = 512
+BATCH_SIZE = 1024 # Doubled to maximize T4 VRAM and minimize PCIe overhead
 M_PER_CLASS = 4
 EMBEDDING_SIZE = 512
 VIRTUAL_EPOCH_BATCHES = 1250
@@ -251,8 +251,8 @@ def train():
     dataloader = DataLoader(
         dataset, 
         batch_sampler=batch_sampler, 
-        num_workers=4, # Kaggle T4x2 has 4 CPU cores, maximize them!
-        prefetch_factor=4, # Queue up more batches so the GPUs never wait
+        num_workers=2, # Dialed back to 2 to prevent 7 threads fighting over 4 vCPUs!
+        prefetch_factor=2, 
         pin_memory=True
     )
     
