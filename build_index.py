@@ -243,6 +243,10 @@ def build_index():
         
     faiss.write_index(index, INDEX_PATH)
     final_df = pd.concat(all_mapping, ignore_index=True)
+    
+    # Kaggle RAM Notebook Tip 2: Downcast datatypes to save memory
+    final_df['faiss_id'] = pd.to_numeric(final_df['faiss_id'], downcast='unsigned')
+    
     final_df.to_csv(MAPPING_PATH, index=False)
     
     print(f"SUCCESS! Robust FAISS index saved to {INDEX_PATH}")
