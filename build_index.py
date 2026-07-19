@@ -23,7 +23,9 @@ EMBEDDING_SIZE = 512
 MODEL_PATH = "best_model.pth"
 INDEX_PATH = "font_embeddings.index"
 MAPPING_PATH = "faiss_mapping.csv"
-CHUNK_SIZE = 10000 
+# We drastically reduce CHUNK_SIZE so if 1 corrupted font detonates a 30GB OOM, 
+# it only takes down 500 fonts with it instead of 10,000!
+CHUNK_SIZE = 500 
 
 CANONICAL_STRINGS = ["AaBbCc", "xyz123", "0OIl", "gjpqy", "Test 00"]
 
