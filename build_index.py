@@ -134,9 +134,22 @@ def build_index():
     transform = get_inference_transform()
     
     print(f"\nScanning for font files in {TTF_DIR}...")
-    ttf_files = list(Path(TTF_DIR).rglob("*.ttf")) + list(Path(TTF_DIR).rglob("*.otf"))
+    all_files = list(Path(TTF_DIR).rglob("*.ttf")) + list(Path(TTF_DIR).rglob("*.otf"))
+    
+    print("Validating font headers to prevent C-level Segmentation Faults...")
+    ttf_files = []
+    for f in all_files:
+        try:
+            if os.path.getsize(f) > 1024: # Must be > 1KB
+                with open(f, 'rb') as file:
+                    head = file.read(4)
+                    if head in (b'\x00\x01\x00\x00', b'OTTO', b'ttcf', b'true'):
+                        ttf_files.append(f)
+        except Exception:
+            pass
+            
     total_fonts = len(ttf_files)
-    print(f"Found {total_fonts} fonts to index.")
+    print(f"Found {total_fonts} valid fonts (filtered out {len(all_files) - total_fonts} corrupted files).")
 
     # Prepare temp directory for chunks
     os.makedirs("faiss_chunks", exist_ok=True)
