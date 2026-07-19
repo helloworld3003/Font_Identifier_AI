@@ -283,7 +283,12 @@ def train():
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        scaler.load_state_dict(checkpoint['scaler_state_dict'])
+        
+        # TPU checkpoints do not contain a scaler_state_dict because they use native bfloat16.
+        # Only load the scaler state if it actually exists in the checkpoint to prevent a KeyError!
+        if 'scaler_state_dict' in checkpoint:
+            scaler.load_state_dict(checkpoint['scaler_state_dict'])
+            
         start_epoch = checkpoint['epoch'] + 1
         best_loss = checkpoint['best_loss']
         epochs_no_improve = checkpoint['epochs_no_improve']
