@@ -207,14 +207,15 @@ def _mp_fn(index, flags):
         num_batches=VIRTUAL_EPOCH_BATCHES
     )
     
-    # Num_workers=2 spawns 16 total background threads (2 per TPU core) 
-    # to dynamically draw the font images in parallel, un-starving the TPU!
+    # CRITICAL STABILITY FIX: TPU DataLoader workers randomly exit due to /dev/shm limits or PIL segfaults.
+    # Setting num_workers=0 completely disables multiprocessing and runs data loading in the main thread.
+    # This completely cures 'DataLoader worker exited unexpectedly' on Kaggle.
     dataloader = DataLoader(
         dataset, 
         batch_sampler=batch_sampler, 
-        num_workers=2, 
-        pin_memory=False,
-        persistent_workers=False  # Disabled to force Kaggle to flush /dev/shm memory between epochs
+        num_workers=0, 
+        pin_memory=False, # pin_memory is only for CUDA GPUs, it causes memory leaks on TPUs!
+        drop_last=True # Required for TPUs to prevent dynamic shape recompilation!
     )
     
     # 3. Model & Loss Setup
