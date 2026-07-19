@@ -1,11 +1,14 @@
-import sys
 import os
+import sys
 import torch
 import faiss
+import argparse
 import pandas as pd
 import numpy as np
 import cv2
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
+import torchvision.transforms as T
 import torch.nn.functional as F
 
 from model import ConvNeXtFontEncoder
@@ -15,184 +18,234 @@ MODEL_PATH = "best_model.pth"
 INDEX_PATH = "font_embeddings.index"
 MAPPING_PATH = "faiss_mapping.csv"
 
+CANONICAL_STRINGS = ["AaBbCc", "xyz123", "0OIl", "gjpqy", "Test 00"]
+
+# ==========================================
+# 1. PREPROCESSING FOR IMAGES
+# ==========================================
 def preprocess_inference_crop(image_np):
-    """
-    Converts a real-world RGB crop into a binarized, clean image
-    to remove backgrounds, lighting variation, and shadows.
-    Ensures Train/Test Symmetry with the training augmentations.
-    """
-    # Resize to match backbone input resolution exactly (W=256, H=64)
     image_np = cv2.resize(image_np, (256, 64))
-    
-    # 1. Convert to Grayscale
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-    
-    # 2. Apply Adaptive Gaussian Thresholding
-    binarized = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-        cv2.THRESH_BINARY, 11, 2
-    )
-    
-    # 3. Re-convert to RGB format for the ConvNeXt tensor layout
+    binarized = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
     rgb_ready = cv2.cvtColor(binarized, cv2.COLOR_GRAY2RGB)
     
-    # 4. Standard ImageNet Normalization to match training
     mean = np.array([0.485, 0.456, 0.406])
     std = np.array([0.229, 0.224, 0.225])
     normalized = (rgb_ready / 255.0 - mean) / std
     
-    # 5. Reshape to PyTorch Tensor Format (C, H, W)
     tensor = torch.tensor(normalized, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
     return tensor
 
-def draw_label(draw, bbox, text):
-    """Draws red bounding box and solid label tab."""
-    xmin, ymin, xmax, ymax = bbox
-    draw.rectangle([xmin, ymin, xmax, ymax], outline="red", width=3)
-    
-    try:
-        font = ImageFont.truetype("arial.ttf", 16)
-    except IOError:
-        font = ImageFont.load_default()
-        
-    text_bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = text_bbox[2] - text_bbox[0]
-    text_h = text_bbox[3] - text_bbox[1]
-    
-    tab_rect = [xmin, ymin - text_h - 4, xmin + text_w + 4, ymin]
-    draw.rectangle(tab_rect, fill="red")
-    draw.text((xmin + 2, ymin - text_h - 2), text, font=font, fill="white")
-
 def auto_detect_text_boxes(image_path):
-    """
-    Automatically detects text regions in the image using adaptive binarization 
-    and morphological dilation to merge character contours into horizontal line segments.
-    """
     img = cv2.imread(image_path)
-    if img is None:
-        return []
-        
+    if img is None: return []
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # Binarize with threshold inversion (text is white on black background for morphological ops)
-    thresh = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-        cv2.THRESH_BINARY_INV, 11, 2
-    )
-    
-    # Kernel size has wide width to merge characters/words horizontally 
-    # but thin height so lines do not merge vertically.
+    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (30, 4))
     dilated = cv2.dilate(thresh, kernel, iterations=1)
-    
     contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     boxes = []
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
-        # Filter out very small boxes to avoid noise
         if w > 15 and h > 10:
             boxes.append({'box': (x, y, x + w, y + h)})
+    return sorted(boxes, key=lambda b: b['box'][1])
+
+def draw_label(draw, bbox, text):
+    xmin, ymin, xmax, ymax = bbox
+    draw.rectangle([xmin, ymin, xmax, ymax], outline="red", width=3)
+    try: font = ImageFont.truetype("arial.ttf", 16)
+    except: font = ImageFont.load_default()
+    text_bbox = draw.textbbox((0, 0), text, font=font)
+    text_w, text_h = text_bbox[2] - text_bbox[0], text_bbox[3] - text_bbox[1]
+    draw.rectangle([xmin, ymin - text_h - 4, xmin + text_w + 4, ymin], fill="red")
+    draw.text((xmin + 2, ymin - text_h - 2), text, font=font, fill="white")
+
+# ==========================================
+# 2. PREPROCESSING FOR FONTS
+# ==========================================
+def render_string(ttf_path, text, target_w=256, target_h=64, font_size=60):
+    try:
+        font = ImageFont.truetype(str(ttf_path), font_size)
+        temp_image = Image.new("RGB", (1, 1), "white")
+        temp_draw = ImageDraw.Draw(temp_image)
+        bbox = temp_draw.textbbox((0, 0), text, font=font)
+        text_w = max(1, bbox[2] - bbox[0])
+        text_h = max(1, bbox[3] - bbox[1])
+        
+        image = Image.new("RGB", (text_w, text_h), "white")
+        draw = ImageDraw.Draw(image)
+        draw.text((-bbox[0], -bbox[1]), text, font=font, fill="black")
+        
+        scale = min(target_w / text_w, target_h / text_h)
+        new_w = max(1, int(text_w * scale))
+        new_h = max(1, int(text_h * scale))
+        
+        image = image.resize((new_w, new_h), Image.Resampling.BILINEAR)
+        final_image = Image.new("RGB", (target_w, target_h), "white")
+        x = (target_w - new_w) // 2
+        y = (target_h - new_h) // 2
+        final_image.paste(image, (x, y))
+        return final_image
+    except Exception:
+        return Image.new("RGB", (target_w, target_h), "white")
+
+def resolve_local_font_path(kaggle_path):
+    """Kaggle paths won't exist on Windows, so we search locally for the filename"""
+    if os.path.exists(kaggle_path):
+        return kaggle_path
+    
+    filename = Path(kaggle_path).name
+    # Search locally in ttf_files dir
+    for p in Path("ttf_files").rglob("*"):
+        if p.name == filename:
+            return str(p)
+    return None
+
+# ==========================================
+# 3. CORE INFERENCE LOGIC
+# ==========================================
+class FontIdentifier:
+    def __init__(self):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Loading ConvNeXt on {self.device}...")
+        self.model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE)
+        self.model.load_state_dict(torch.load(MODEL_PATH, map_location=self.device, weights_only=True))
+        self.model.to(self.device)
+        self.model.eval()
+        
+        print("Loading FAISS Index...")
+        self.index = faiss.read_index(INDEX_PATH)
+        self.mapping_df = pd.read_csv(MAPPING_PATH)
+
+    def identify_image(self, image_path):
+        boxes = auto_detect_text_boxes(image_path)
+        if not boxes:
+            img = Image.open(image_path)
+            boxes = [{'box': (0, 0, img.width, img.height)}]
             
-    # Sort bounding boxes top-to-bottom
-    boxes = sorted(boxes, key=lambda b: b['box'][1])
-    return boxes
+        original_img = Image.open(image_path).convert("RGB")
+        draw = ImageDraw.Draw(original_img)
+        
+        crops_tensors, valid_bboxes = [], []
+        for item in boxes:
+            xmin, ymin, xmax, ymax = item['box']
+            xmin, ymin = max(0, xmin), max(0, ymin)
+            xmax, ymax = min(original_img.width, xmax), min(original_img.height, ymax)
+            
+            crop_np = np.array(original_img.crop((xmin, ymin, xmax, ymax)))
+            crops_tensors.append(preprocess_inference_crop(crop_np))
+            valid_bboxes.append(item['box'])
+            
+        batch_tensor = torch.cat(crops_tensors, dim=0).to(self.device)
+        with torch.no_grad():
+            embeddings = F.normalize(self.model(batch_tensor), p=2, dim=1)
+            
+        distances, indices = self.index.search(embeddings.cpu().numpy().astype('float32'), 1)
+        
+        for idx, bbox in enumerate(valid_bboxes):
+            confidence = ((distances[idx][0] + 1) / 2) * 100
+            font_name = self.mapping_df.iloc[indices[idx][0]]['font_name']
+            draw_label(draw, bbox, f"{font_name} ({confidence:.1f}%)")
+            print(f"Box {bbox} -> {font_name} ({confidence:.1f}%)")
+            
+        original_img.save("visual_result_image.png")
+        print("\nSaved output to visual_result_image.png")
 
-def run_inference(image_path, bounding_boxes):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # Load ConvNeXt Model
-    model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE)
-    if not os.path.exists(MODEL_PATH):
-        print(f"Error: Model weights not found at {MODEL_PATH}")
-        return
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
-    model.to(device)
-    model.eval()
+    def identify_font(self, font_path, top_k=5):
+        print(f"Analyzing structure of Font: {Path(font_path).name}")
+        
+        # 1. Render exactly like the training loop
+        transform = T.Compose([
+            T.ToTensor(),
+            T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+        ])
+        
+        tensors = []
+        for text in CANONICAL_STRINGS:
+            img = render_string(font_path, text)
+            tensors.append(transform(img))
+            
+        batch = torch.stack(tensors).unsqueeze(0).to(self.device) # (1, 5, 3, 64, 256)
+        batch = batch.view(5, 3, 64, 256)
+        
+        # 2. Get Average Embedding
+        with torch.no_grad():
+            embeddings = self.model(batch).view(1, 5, EMBEDDING_SIZE)
+            avg_emb = F.normalize(torch.mean(embeddings, dim=1), p=2, dim=1)
+            
+        # 3. Search FAISS (We get top_k + 1 in case the query font itself is the #1 match)
+        distances, indices = self.index.search(avg_emb.cpu().numpy().astype('float32'), top_k + 1)
+        
+        # 4. Generate Visualization Board
+        board_w = 1200
+        row_h = 180
+        viz_board = Image.new("RGB", (board_w, row_h * (top_k + 1)), "white")
+        draw = ImageDraw.Draw(viz_board)
+        
+        try: default_font = ImageFont.truetype("arial.ttf", 26)
+        except: default_font = ImageFont.load_default()
+        
+        def draw_row(y_offset, title, font_to_render, is_query=False):
+            # Title
+            draw.text((30, y_offset + 20), title, font=default_font, fill="#2563eb" if is_query else "#333333")
+            # Rendered Sample
+            try:
+                render_font = ImageFont.truetype(font_to_render, 64)
+                # Some fonts have large ascenders/descenders, so we give them plenty of vertical breathing room
+                draw.text((30, y_offset + 70), "Sphinx of black quartz, judge my vow.", font=render_font, fill="black")
+            except Exception:
+                draw.text((30, y_offset + 70), "[Font Rendering Failed]", font=default_font, fill="red")
+            # Separator
+            draw.line([(0, y_offset + row_h - 1), (board_w, y_offset + row_h - 1)], fill="#e5e7eb", width=2)
+            
+        # Draw Query Row
+        draw_row(0, f"QUERY FONT: {Path(font_path).name}", font_path, is_query=True)
+        
+        # Draw Matches
+        y_cursor = row_h
+        drawn_count = 0
+        for i in range(top_k + 1):
+            if drawn_count >= top_k: break
+            
+            score = distances[0][i]
+            faiss_id = indices[0][i]
+            match_row = self.mapping_df[self.mapping_df['faiss_id'] == faiss_id].iloc[0]
+            
+            # Skip if the closest match is literally the exact same file we queried!
+            if match_row['font_name'] == Path(font_path).stem and score > 0.99:
+                continue
+                
+            confidence = ((score + 1) / 2) * 100
+            local_path = resolve_local_font_path(match_row['font_path'])
+            
+            title = f"MATCH #{drawn_count + 1} ({confidence:.2f}%): {match_row['font_name']}"
+            if not local_path:
+                title += " [TTF NOT FOUND LOCALLY]"
+                
+            draw_row(y_cursor, title, local_path if local_path else font_path)
+            y_cursor += row_h
+            drawn_count += 1
+            print(title)
 
-    if not os.path.exists(INDEX_PATH) or not os.path.exists(MAPPING_PATH):
-        print("Error: FAISS index or mapping CSV not found. Run build_index.py first.")
-        return
-    
-    index = faiss.read_index(INDEX_PATH)
-    mapping_df = pd.read_csv(MAPPING_PATH)
-    
-    original_img = Image.open(image_path).convert("RGB")
-    draw = ImageDraw.Draw(original_img)
-    
-    print("Performing Font Inference with Adaptive Binarization...")
-    
-    crops_tensors = []
-    valid_bboxes = []
-    
-    for item in bounding_boxes:
-        bbox = item['box']
-        xmin, ymin, xmax, ymax = bbox
-        
-        xmin, ymin = max(0, xmin), max(0, ymin)
-        xmax, ymax = min(original_img.width, xmax), min(original_img.height, ymax)
-        
-        crop_img = original_img.crop((xmin, ymin, xmax, ymax))
-        crop_np = np.array(crop_img)
-        
-        # Apply Adaptive Threshold Pipeline
-        tensor = preprocess_inference_crop(crop_np) # Shape: (1, 3, 64, 256)
-        crops_tensors.append(tensor)
-        valid_bboxes.append(bbox)
-        
-    if not crops_tensors:
-        print("No valid bounding boxes to run inference on.")
-        return
+        viz_board.save("visual_result_fonts.png")
+        print("\nSaved similar fonts visual comparison to visual_result_fonts.png!")
 
-    # Stack all tensors into a single batch tensor: shape (N, 3, 64, 256)
-    batch_tensor = torch.cat(crops_tensors, dim=0).to(device)
-    
-    with torch.no_grad():
-        embeddings = model(batch_tensor)
-        embeddings = F.normalize(embeddings, p=2, dim=1)
-        
-    vectors_np = embeddings.cpu().numpy().astype('float32')
-    
-    # Perform batched search in FAISS
-    distances, indices = index.search(vectors_np, 1)
-    
-    for idx, bbox in enumerate(valid_bboxes):
-        top1_idx = indices[idx][0]
-        # Calculate confidence metric
-        confidence = distances[idx][0] * 100 
-        
-        match_row = mapping_df.iloc[top1_idx]
-        font_name = match_row['font_name']
-        
-        label_text = f"{font_name} ({confidence:.1f}%)"
-        draw_label(draw, bbox, label_text)
-        print(f"Matched Region {bbox} to {font_name} with confidence {confidence:.2f}%")
-
-    output_path = "visual_result.png"
-    original_img.save(output_path)
-    print(f"\nSaved visual output to {output_path}")
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python inference.py <path_to_image> [xmin,ymin,xmax,ymax] ...")
+    parser = argparse.ArgumentParser(description="Font Identifier AI")
+    parser.add_argument("--image", type=str, help="Detect fonts inside an image")
+    parser.add_argument("--font", type=str, help="Find visually similar fonts to a TTF/OTF file")
+    
+    args = parser.parse_args()
+    
+    if not args.image and not args.font:
+        parser.print_help()
         sys.exit(1)
         
-    img_path = sys.argv[1]
-    boxes = []
-    
-    for arg in sys.argv[2:]:
-        parts = arg.split(',')
-        if len(parts) == 4:
-            boxes.append({'box': (int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))})
-            
-    if not boxes:
-        print("No bounding boxes provided. Running auto-detector to locate text regions...")
-        boxes = auto_detect_text_boxes(img_path)
-        if not boxes:
-            print("Auto-detector found no text regions. Defaulting to full image.")
-            img_temp = Image.open(img_path)
-            boxes.append({'box': (0, 0, img_temp.width, img_temp.height)})
-        else:
-            print(f"Auto-detected {len(boxes)} text regions.")
-        
-    run_inference(img_path, boxes)
+    app = FontIdentifier()
+    if args.image:
+        app.identify_image(args.image)
+    if args.font:
+        app.identify_font(args.font, top_k=5)
