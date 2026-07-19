@@ -312,32 +312,56 @@ def _mp_fn(index, flags):
     MODEL_PATH = os.path.join(script_dir, "best_model.pth")
     LOG_CSV_PATH = os.path.join(script_dir, "training_log.csv")
     
+    if not os.path.exists(CHECKPOINT_PATH):
+        # We allow starting from scratch if no checkpoint exists
+        xm.master_print(f"No checkpoint file found at '{CHECKPOINT_PATH}'. Starting training from scratch (Epoch 1)...")
+    else:
+        xm.master_print(f"Found checkpoint file '{CHECKPOINT_PATH}'. Resuming training...")
+        checkpoint = torch.load(CHECKPOINT_PATH, map_location='cpu')
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            
+        # PyTorch XLA CRITICAL FIX: Explicitly move optimizer momentum tensors to TPU
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to(device)
+                    
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_loss = checkpoint['best_loss']
+        epochs_no_improve = checkpoint['epochs_no_improve']
+        xm.master_print(f"Resumed from epoch {checkpoint['epoch']} with best loss {best_loss:.4f}.")
+        
+    # --- ROBUST CSV SELF-CHECK & RECOVERY ---
     import csv
     if xm.is_master_ordinal():
-        if not os.path.exists(LOG_CSV_PATH):
+        if os.path.exists(LOG_CSV_PATH):
+            xm.master_print("Checking existing CSV log for integrity...")
+            valid_rows = []
+            with open(LOG_CSV_PATH, 'r') as f:
+                reader = csv.reader(f)
+                header = next(reader, None)
+                if header:
+                    valid_rows.append(header)
+                for row in reader:
+                    try:
+                        row_epoch = int(row[0])
+                        # If a crash happened mid-epoch, the CSV will contain garbage partial data 
+                        # for an epoch that wasn't fully checkpointed. We strictly purge it here!
+                        if row_epoch < start_epoch:
+                            valid_rows.append(row)
+                    except ValueError:
+                        pass
+                        
+            with open(LOG_CSV_PATH, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerows(valid_rows)
+            xm.master_print(f"CSV Self-Check complete! Purged any corrupted data from epoch >= {start_epoch}.")
+        else:
             with open(LOG_CSV_PATH, 'w', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow(["epoch", "batch", "loss", "timestamp"])
-    
-    if not os.path.exists(CHECKPOINT_PATH):
-        raise FileNotFoundError(f"CRITICAL ERROR: Checkpoint file '{CHECKPOINT_PATH}' was not found! The script is configured to STRICTLY require checkpoint.pth to proceed.")
-        
-    xm.master_print(f"Found checkpoint file '{CHECKPOINT_PATH}'. Resuming training...")
-    checkpoint = torch.load(CHECKPOINT_PATH, map_location='cpu')
-    model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        
-    # PyTorch XLA CRITICAL FIX: Explicitly move optimizer momentum tensors to TPU
-    for state in optimizer.state.values():
-        for k, v in state.items():
-            if isinstance(v, torch.Tensor):
-                state[k] = v.to(device)
-                
-    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-    start_epoch = checkpoint['epoch'] + 1
-    best_loss = checkpoint['best_loss']
-    epochs_no_improve = checkpoint['epochs_no_improve']
-    xm.master_print(f"Resumed from epoch {checkpoint['epoch']} with best loss {best_loss:.4f}.")
     xm.master_print("Starting XLA 8-Core Training Pipeline...")
     
     for epoch in range(start_epoch, MAX_EPOCHS + 1):
