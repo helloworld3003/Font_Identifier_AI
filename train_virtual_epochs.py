@@ -14,6 +14,10 @@ import torch.multiprocessing as mp
 # Bypass Google Colab's strict 64MB /dev/shm limit by forcing PyTorch to use the disk (/tmp) for IPC
 mp.set_sharing_strategy('file_system')
 
+# Prevent OpenCV from spawning thousands of threads and crashing Kaggle's DataLoader
+cv2.setNumThreads(0)
+cv2.ocl.setUseOpenCL(False)
+
 from torch.utils.data import Dataset, DataLoader, Sampler
 
 import numpy as np
@@ -238,11 +242,6 @@ def train():
     )
     
     model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE)
-    
-    if torch.cuda.device_count() > 1 and not is_tpu:
-        logger.info(f"Multi-GPU Detected! Engaging {torch.cuda.device_count()} GPUs via DataParallel.")
-        model = nn.DataParallel(model)
-        
     model = model.to(device)
     
     miner = miners.BatchHardMiner()
@@ -273,8 +272,9 @@ def train():
     epochs_no_improve = 0
     start_epoch = 1
     
-    CHECKPOINT_PATH = "checkpoint.pth"
-    MODEL_PATH = "best_model.pth"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    CHECKPOINT_PATH = os.path.join(script_dir, "checkpoint.pth")
+    MODEL_PATH = os.path.join(script_dir, "best_model.pth")
     
     # Check for checkpoint or model weights to resume
     if os.path.exists(CHECKPOINT_PATH):
@@ -295,6 +295,13 @@ def train():
         state_dict = torch.load(MODEL_PATH, map_location=device, weights_only=True)
         model.load_state_dict(state_dict, strict=False)
         logger.info(f"Successfully loaded backbone weights. Starting training from Epoch 1.")
+        
+    # CRITICAL: Wrap the model in DataParallel AFTER loading the checkpoint!
+    # If we wrap it before loading, PyTorch will add 'module.' prefixes to the state_dict keys,
+    # causing TPU checkpoints (which don't have 'module.') to crash when loading!
+    if torch.cuda.device_count() > 1 and not is_tpu:
+        logger.info(f"Multi-GPU Detected! Engaging {torch.cuda.device_count()} GPUs via DataParallel.")
+        model = nn.DataParallel(model)
         
     logger.info("Starting Gold-Standard Dynamic Training Pipeline...")
     
