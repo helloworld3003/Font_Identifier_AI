@@ -345,34 +345,54 @@ def _mp_fn(index, flags):
     LOG_CSV_PATH = os.path.join(script_dir, "training_log.csv")
     
     if not os.path.exists(CHECKPOINT_PATH):
-        # We allow starting from scratch if no checkpoint exists
-        xm.master_print(f"No checkpoint file found at '{CHECKPOINT_PATH}'. Starting training from scratch (Epoch 1)...")
+        xm.master_print(f"No checkpoint file found at '{CHECKPOINT_PATH}'.")
+        if os.path.exists(MODEL_PATH):
+            xm.master_print(f"Found 'best_model.pth'. Loading pre-trained weights to resume...")
+            try:
+                model.load_state_dict(torch.load(MODEL_PATH, map_location='cpu'))
+            except Exception as e:
+                xm.master_print(f"Failed to load 'best_model.pth': {e}")
+        else:
+            xm.master_print("Starting training from scratch (Epoch 1)...")
     else:
         xm.master_print(f"Found checkpoint file '{CHECKPOINT_PATH}'. Resuming training...")
-        checkpoint = torch.load(CHECKPOINT_PATH, map_location='cpu')
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        try:
+            checkpoint = torch.load(CHECKPOINT_PATH, map_location='cpu')
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                
+            # PyTorch XLA CRITICAL FIX: Explicitly move optimizer momentum tensors to TPU
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.to(device)
+                        
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             
-        # PyTorch XLA CRITICAL FIX: Explicitly move optimizer momentum tensors to TPU
-        for state in optimizer.state.values():
-            for k, v in state.items():
-                if isinstance(v, torch.Tensor):
-                    state[k] = v.to(device)
-                    
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        
-        # Mid-Epoch Resume Logic
-        resume_epoch = checkpoint.get('epoch', 1)
-        resume_batch = checkpoint.get('batch_idx', 0)
-        
-        if resume_batch >= VIRTUAL_EPOCH_BATCHES:
-            start_epoch = resume_epoch + 1
-            start_batch = 0
-            xm.master_print(f"Resumed from completed Epoch {resume_epoch} with best loss {best_loss:.4f}.")
-        else:
-            start_epoch = resume_epoch
-            start_batch = resume_batch
-            xm.master_print(f"Resumed MID-EPOCH from Epoch {start_epoch}, Batch {start_batch} with best loss {best_loss:.4f}.")
+            # Mid-Epoch Resume Logic
+            resume_epoch = checkpoint.get('epoch', 1)
+            resume_batch = checkpoint.get('batch_idx', 0)
+            
+            if resume_batch >= VIRTUAL_EPOCH_BATCHES:
+                start_epoch = resume_epoch + 1
+                start_batch = 0
+                xm.master_print(f"Resumed from completed Epoch {resume_epoch}.")
+            else:
+                start_epoch = resume_epoch
+                start_batch = resume_batch
+                xm.master_print(f"Resumed MID-EPOCH from Epoch {start_epoch}, Batch {start_batch}.")
+                
+        except Exception as e:
+            xm.master_print(f"CRITICAL WARNING: Checkpoint file is corrupted! ({e})")
+            xm.master_print("Attempting to fallback to 'best_model.pth' to rescue model weights...")
+            if os.path.exists(MODEL_PATH):
+                try:
+                    model.load_state_dict(torch.load(MODEL_PATH, map_location='cpu', weights_only=True))
+                    xm.master_print("Successfully rescued model weights from 'best_model.pth'! Optimizer state was lost, resuming as a warm restart.")
+                except Exception as e2:
+                    xm.master_print(f"Failed to load 'best_model.pth': {e2}")
+            else:
+                xm.master_print("No fallback model found. Starting from scratch.")
         
     # --- ROBUST CSV SELF-CHECK & RECOVERY ---
     import csv
