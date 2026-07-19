@@ -23,6 +23,7 @@ fonts-main/
 fonts-main.zip
 models/
 tests/
+simple_model_190726/
 
 # # PyTorch Models & Weights
 # *.pth
