@@ -21,7 +21,7 @@ def worker_fn(worker_id, chunk_files):
     # Check if this worker died previously. If so, skip the bomb that killed it.
     if os.path.exists(CURRENT_FILE):
         if os.path.exists(PROGRESS_FILE):
-            with open(PROGRESS_FILE, "r") as f:
+            with open(PROGRESS_FILE, "r", encoding="utf-8") as f:
                 try:
                     start_idx = int(f.read().strip())
                 except ValueError:
@@ -29,7 +29,7 @@ def worker_fn(worker_id, chunk_files):
         
         # We died on start_idx. The Orchestrator already blacklisted it. Skip it!
         start_idx += 1
-        with open(PROGRESS_FILE, "w") as f:
+        with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
             f.write(str(start_idx))
             
         for _ in range(10):
@@ -42,7 +42,7 @@ def worker_fn(worker_id, chunk_files):
     else:
         # Normal resume
         if os.path.exists(PROGRESS_FILE):
-            with open(PROGRESS_FILE, "r") as f:
+            with open(PROGRESS_FILE, "r", encoding="utf-8") as f:
                 try:
                     start_idx = int(f.read().strip())
                 except ValueError:
@@ -52,7 +52,7 @@ def worker_fn(worker_id, chunk_files):
         font_path = chunk_files[idx]
         
         # WRITE DEATH MARKER
-        with open(CURRENT_FILE, "w") as f:
+        with open(CURRENT_FILE, "w", encoding="utf-8") as f:
             f.write(f"{idx}|{font_path}")
             f.flush()
             os.fsync(f.fileno())
@@ -78,7 +78,7 @@ def worker_fn(worker_id, chunk_files):
                 time.sleep(0.01)
         
         # Save progress
-        with open(PROGRESS_FILE, "w") as f:
+        with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
             f.write(str(idx + 1))
             
         if (idx + 1) % 500 == 0:
@@ -129,7 +129,7 @@ def main():
     # Read existing blacklist to avoid scanning known bombs
     blacklist = set()
     if os.path.exists(BLACKLIST_FILE):
-        with open(BLACKLIST_FILE, "r") as f:
+        with open(BLACKLIST_FILE, "r", encoding="utf-8") as f:
             blacklist = set([line.strip() for line in f.readlines()])
             
     clean_files = [f for f in all_files if str(f) not in blacklist]
@@ -169,7 +169,7 @@ def main():
                     # 💥 WORKER CRASHED! (Likely SIGKILL OOM)
                     CURRENT_FILE = f"worker_{wid}_current.txt"
                     if os.path.exists(CURRENT_FILE):
-                        with open(CURRENT_FILE, "r") as f:
+                        with open(CURRENT_FILE, "r", encoding="utf-8") as f:
                             data = f.read().strip()
                             if "|" in data:
                                 idx, bomb_path = data.split("|", 1)
@@ -179,7 +179,7 @@ def main():
                                 print("!" * 60)
                                 
                                 # Add to blacklist
-                                with open(BLACKLIST_FILE, "a") as bf:
+                                with open(BLACKLIST_FILE, "a", encoding="utf-8") as bf:
                                     bf.write(bomb_path + "\n")
                                 print(f"-> Added {Path(bomb_path).name} to {BLACKLIST_FILE}!")
                                 
