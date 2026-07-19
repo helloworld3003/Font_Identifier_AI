@@ -10,6 +10,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+import torch.multiprocessing as mp
+
+# Bypass Kaggle's deadly 64MB /dev/shm limit to prevent PyTorch background workers from crashing!
+mp.set_sharing_strategy('file_system')
 
 import numpy as np
 import timm
@@ -84,7 +88,8 @@ def get_train_transforms():
         A.Rotate(limit=8, p=0.4),
         A.Perspective(scale=(0.05, 0.09), p=0.3),
         A.GaussianBlur(blur_limit=(3, 5), p=0.3),
-        A.Lambda(image=simulate_adaptive_threshold, p=0.4),
+        # Disabled simulate_adaptive_threshold to prevent OpenCV memory leaks in multiprocessing
+        # A.Lambda(image=simulate_adaptive_threshold, p=0.4),
         A.InvertImg(p=0.2), 
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ToTensorV2()
@@ -207,13 +212,13 @@ def _mp_fn(index, flags):
         num_batches=VIRTUAL_EPOCH_BATCHES
     )
     
-    # CRITICAL STABILITY FIX: TPU DataLoader workers randomly exit due to /dev/shm limits or PIL segfaults.
-    # Setting num_workers=0 completely disables multiprocessing and runs data loading in the main thread.
-    # This completely cures 'DataLoader worker exited unexpectedly' on Kaggle.
+    # CRITICAL TPU FIX: By enabling 'file_system' sharing strategy above, we bypassed the /dev/shm crash!
+    # We can now safely use num_workers=2 (16 total workers across 8 cores) to maximize speed without OOMing!
     dataloader = DataLoader(
         dataset, 
         batch_sampler=batch_sampler, 
-        num_workers=0, 
+        num_workers=2, 
+        persistent_workers=True, # Keep workers alive to prevent RAM spikes between epochs
         pin_memory=False, # pin_memory is only for CUDA GPUs, it causes memory leaks on TPUs!
         drop_last=True # Required for TPUs to prevent dynamic shape recompilation!
     )
