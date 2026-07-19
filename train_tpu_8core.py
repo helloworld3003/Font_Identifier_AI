@@ -202,12 +202,12 @@ def _mp_fn(index, flags):
         num_batches=VIRTUAL_EPOCH_BATCHES
     )
     
-    # Num_workers=4 spawns 32 total background threads (4 per TPU core) 
+    # Num_workers=2 spawns 16 total background threads (2 per TPU core) 
     # to dynamically draw the font images in parallel, un-starving the TPU!
     dataloader = DataLoader(
         dataset, 
         batch_sampler=batch_sampler, 
-        num_workers=4, 
+        num_workers=2, 
         pin_memory=False,
         persistent_workers=True
     )
