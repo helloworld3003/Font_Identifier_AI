@@ -209,7 +209,7 @@ def _mp_fn(index, flags):
         batch_sampler=batch_sampler, 
         num_workers=2, 
         pin_memory=False,
-        persistent_workers=True
+        persistent_workers=False  # Disabled to force Kaggle to flush /dev/shm memory between epochs
     )
     
     # 3. Model & Loss Setup
