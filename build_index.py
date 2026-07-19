@@ -108,6 +108,8 @@ class FontRenderDataset(Dataset):
 def build_index():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True # Extreme speedhack for static shapes
 
     # Load ConvNeXt Model
     model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE)
@@ -116,6 +118,12 @@ def build_index():
         print(f"Loaded trained weights from {MODEL_PATH}")
     else:
         print(f"Warning: {MODEL_PATH} not found. Using untrained weights for demonstration.")
+    
+    # Wrap in DataParallel to utilize both Kaggle T4 GPUs
+    if torch.cuda.device_count() > 1:
+        print(f"Let's use {torch.cuda.device_count()} GPUs!")
+        model = torch.nn.DataParallel(model)
+        
     model.to(device)
     model.eval()
 
@@ -138,7 +146,7 @@ def build_index():
     dataset = FontRenderDataset(ttf_files, transform=transform)
     dataloader = DataLoader(
         dataset,
-        batch_size=32,
+        batch_size=512, # Drastically increased from 32 to peg the GPUs at 100%
         num_workers=4,
         pin_memory=True
     )
