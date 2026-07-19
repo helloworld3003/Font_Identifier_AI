@@ -1,4 +1,5 @@
 import os
+import gc
 import torch
 import faiss
 import numpy as np
@@ -78,6 +79,14 @@ def render_string(ttf_path, text, target_w=256, target_h=64, font_size=60):
         x = (target_w - new_w) // 2
         y = (target_h - new_h) // 2
         final_image.paste(image, (x, y))
+        
+        # Explicitly clean up C-level Pillow resources to prevent memory leaks!
+        del draw
+        del temp_draw
+        del font
+        del temp_image
+        del image
+        
         return final_image
     except Exception:
         # Fallback empty image if the font is corrupted or fails
@@ -138,7 +147,7 @@ def build_index():
     dataset = FontRenderDataset(ttf_files, transform=transform)
     dataloader = DataLoader(
         dataset,
-        batch_size=128, 
+        batch_size=32, # Drastically reduced to prevent CPU RAM fragmentation
         num_workers=0,  # CRITICAL: Kaggle CANNOT handle background TTF rendering. Must be 0.
         pin_memory=False # CRITICAL: pin_memory=True consumes too much host RAM and causes OOM.
     )
@@ -174,6 +183,10 @@ def build_index():
                 "font_path": str(ttf_path), 
                 "font_name": ttf_path.stem
             })
+            
+        # Force garbage collection every batch to physically purge RAM
+        if B > 0:
+            gc.collect()
 
     # Ingest into FAISS
     vectors_np = np.vstack(font_vectors).astype('float32')
