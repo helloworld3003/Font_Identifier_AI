@@ -12,7 +12,26 @@ from torch.utils.data import Dataset, DataLoader
 
 # Import the correct modern model architecture
 from model import ConvNeXtFontEncoder
-TTF_DIR = "ttf_files"
+# Check if running on Kaggle and auto-mount the dataset to prevent symlink errors
+from pathlib import Path
+kaggle_input_dir = Path("/kaggle/input")
+if kaggle_input_dir.exists():
+    try:
+        target_dir = None
+        for d in kaggle_input_dir.rglob("ttf_files"):
+            if d.is_dir():
+                target_dir = d
+                break
+        if target_dir:
+            TTF_DIR = str(target_dir)
+        else:
+            first_ttf = next(kaggle_input_dir.rglob("*.ttf"))
+            TTF_DIR = str(first_ttf.parent)
+        print(f"Auto-detected Kaggle dataset at: {TTF_DIR}")
+    except StopIteration:
+        TTF_DIR = "ttf_files"
+else:
+    TTF_DIR = "ttf_files"
 
 # Hardcoded constraints MUST match train_tpu_8core.py exactly
 EMBEDDING_SIZE = 512
