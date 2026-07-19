@@ -119,9 +119,16 @@ class FontIdentifier:
         self.index = faiss.read_index(INDEX_PATH)
         self.mapping_df = pd.read_csv(MAPPING_PATH)
 
-    def identify_image(self, image_path):
-        boxes = auto_detect_text_boxes(image_path)
-        if not boxes:
+    def identify_image(self, image_path, top_k=5):
+        print(f"\n[INTERACTIVE MODE] Analyzing {image_path}...")
+        multi = input("Does this image contain MULTIPLE different fonts? (y/n) [Default: n]: ").strip().lower()
+        
+        if multi == 'y':
+            boxes = auto_detect_text_boxes(image_path)
+            if not boxes:
+                img = Image.open(image_path)
+                boxes = [{'box': (0, 0, img.width, img.height)}]
+        else:
             img = Image.open(image_path)
             boxes = [{'box': (0, 0, img.width, img.height)}]
             
@@ -142,16 +149,70 @@ class FontIdentifier:
         with torch.no_grad():
             embeddings = F.normalize(self.model(batch_tensor), p=2, dim=1)
             
-        distances, indices = self.index.search(embeddings.cpu().numpy().astype('float32'), 1)
+        distances, indices = self.index.search(embeddings.cpu().numpy().astype('float32'), top_k)
         
         for idx, bbox in enumerate(valid_bboxes):
-            confidence = ((distances[idx][0] + 1) / 2) * 100
-            font_name = self.mapping_df.iloc[indices[idx][0]]['font_name']
-            draw_label(draw, bbox, f"{font_name} ({confidence:.1f}%)")
-            print(f"Box {bbox} -> {font_name} ({confidence:.1f}%)")
+            print(f"\n--- Detected Text Region {bbox} ---")
+            best_name = self.mapping_df.iloc[indices[idx][0]]['font_name']
+            best_conf = ((distances[idx][0] + 1) / 2) * 100
+            draw_label(draw, bbox, f"{best_name} ({best_conf:.1f}%)")
+            
+            # --- Build the Visualization Board for this Bounding Box ---
+            board_w = 1200
+            row_h = 180
+            viz_board = Image.new("RGB", (board_w, row_h * (top_k + 1)), "white")
+            draw_board = ImageDraw.Draw(viz_board)
+            try: default_font = ImageFont.truetype("arial.ttf", 26)
+            except: default_font = ImageFont.load_default()
+            
+            def draw_image_row(y_offset, title, font_to_render=None, is_query=False, query_img=None, custom_text=""):
+                draw_board.text((30, y_offset + 20), title, font=default_font, fill="#2563eb" if is_query else "#333333")
+                if is_query and query_img is not None:
+                    crop_w, crop_h = query_img.size
+                    # Scale crop so it fits nicely inside the 180px row
+                    scale = min((board_w - 60) / crop_w, 100 / crop_h)
+                    new_w = max(1, int(crop_w * scale))
+                    new_h = max(1, int(crop_h * scale))
+                    resized_crop = query_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    viz_board.paste(resized_crop, (30, y_offset + 60))
+                else:
+                    try:
+                        render_font = ImageFont.truetype(font_to_render, 64)
+                        draw_board.text((30, y_offset + 70), custom_text, font=render_font, fill="black")
+                    except Exception:
+                        draw_board.text((30, y_offset + 70), "[Font Rendering Failed]", font=default_font, fill="red")
+                draw_board.line([(0, y_offset + row_h - 1), (board_w, y_offset + row_h - 1)], fill="#e5e7eb", width=2)
+                
+            xmin, ymin, xmax, ymax = bbox
+            crop_img = original_img.crop((xmin, ymin, xmax, ymax))
+            
+            print(f"\n[INTERACTIVE MODE] Processing Box {idx+1} at {bbox}...")
+            user_input = input(f"What text is written in this image? (Press Enter for default): ").strip()
+            display_text = user_input if user_input else "Sphinx of black quartz, judge my vow."
+            
+            draw_image_row(0, f"QUERY IMAGE CROP {idx+1}", is_query=True, query_img=crop_img)
+            
+            y_cursor = row_h
+            for i in range(top_k):
+                confidence = ((distances[idx][i] + 1) / 2) * 100
+                font_name = self.mapping_df.iloc[indices[idx][i]]['font_name']
+                font_path = self.mapping_df.iloc[indices[idx][i]]['font_path']
+                local_path = resolve_local_font_path(font_path)
+                
+                title = f"MATCH #{i+1} ({confidence:.2f}%): {font_name}"
+                if not local_path:
+                    title += " [TTF NOT FOUND LOCALLY]"
+                
+                draw_image_row(y_cursor, title, local_path, custom_text=display_text)
+                y_cursor += row_h
+                print(f"  Match #{i+1} ({confidence:.2f}%): {font_name}")
+                
+            out_name = f"visual_result_image_box_{idx+1}.png"
+            viz_board.save(out_name)
+            print(f"Saved visualization board for Box {idx+1} to {out_name}")
             
         original_img.save("visual_result_image.png")
-        print("\nSaved output to visual_result_image.png")
+        print("\nSaved overall bounding box image to visual_result_image.png")
 
     def identify_font(self, font_path, top_k=5):
         print(f"Analyzing structure of Font: {Path(font_path).name}")
@@ -211,7 +272,7 @@ class FontIdentifier:
             
             score = distances[0][i]
             faiss_id = indices[0][i]
-            match_row = self.mapping_df[self.mapping_df['faiss_id'] == faiss_id].iloc[0]
+            match_row = self.mapping_df.iloc[faiss_id]
             
             # Skip if the closest match is literally the exact same file we queried!
             if match_row['font_name'] == Path(font_path).stem and score > 0.99:
