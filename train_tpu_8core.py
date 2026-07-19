@@ -238,11 +238,13 @@ def _mp_fn(index, flags):
     CHECKPOINT_PATH = os.path.join(script_dir, "checkpoint.pth")
     MODEL_PATH = os.path.join(script_dir, "best_model.pth")
     
-    if os.path.exists(CHECKPOINT_PATH):
-        xm.master_print(f"Found checkpoint file '{CHECKPOINT_PATH}'. Resuming training...")
-        checkpoint = torch.load(CHECKPOINT_PATH, map_location='cpu')
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    if not os.path.exists(CHECKPOINT_PATH):
+        raise FileNotFoundError(f"CRITICAL ERROR: Checkpoint file '{CHECKPOINT_PATH}' was not found! The script is configured to STRICTLY require checkpoint.pth to proceed.")
+        
+    xm.master_print(f"Found checkpoint file '{CHECKPOINT_PATH}'. Resuming training...")
+    checkpoint = torch.load(CHECKPOINT_PATH, map_location='cpu')
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         
         # PyTorch XLA CRITICAL FIX: Explicitly move optimizer momentum tensors to TPU
         for state in optimizer.state.values():
@@ -255,12 +257,6 @@ def _mp_fn(index, flags):
         best_loss = checkpoint['best_loss']
         epochs_no_improve = checkpoint['epochs_no_improve']
         xm.master_print(f"Resumed from epoch {checkpoint['epoch']} with best loss {best_loss:.4f}.")
-    elif os.path.exists(MODEL_PATH):
-        xm.master_print(f"Checkpoint not found. Loading model weights from '{MODEL_PATH}' to continue training...")
-        state_dict = torch.load(MODEL_PATH, map_location='cpu', weights_only=True)
-        model.load_state_dict(state_dict, strict=False)
-        xm.master_print(f"Successfully loaded backbone weights. Starting training from Epoch 1.")
-        
     xm.master_print("Starting XLA 8-Core Training Pipeline...")
     
     for epoch in range(start_epoch, MAX_EPOCHS + 1):
