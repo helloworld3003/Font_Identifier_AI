@@ -47,6 +47,10 @@ def render_string(ttf_path, text, target_w=256, target_h=64, font_size=60):
         text_w = max(1, bbox[2] - bbox[0])
         text_h = max(1, bbox[3] - bbox[1])
         
+        # CRITICAL FIX: Font Metric Bomb Protection!
+        if text_w > 5000 or text_h > 5000:
+            raise ValueError("Font Metric Bomb detected! Skipping font.")
+            
         image = Image.new("RGB", (text_w, text_h), "white")
         draw = ImageDraw.Draw(image)
         draw.text((-bbox[0], -bbox[1]), text, font=font, fill="black")

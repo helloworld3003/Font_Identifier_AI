@@ -200,6 +200,12 @@ class DynamicFontDataset(Dataset):
             text_w = max(1, bbox[2] - bbox[0])
             text_h = max(1, bbox[3] - bbox[1])
             
+            # CRITICAL FIX: Font Metric Bomb Protection!
+            # Corrupted TTF files can have broken internal tables stating a character is 50,000 pixels wide.
+            # If we pass that to Image.new(), Pillow attempts to allocate 30GB of RAM instantly, causing SIGKILL.
+            if text_w > 5000 or text_h > 5000:
+                raise ValueError("Font Metric Bomb detected! Skipping font.")
+            
             image = Image.new("RGB", (text_w, text_h), "white")
             draw = ImageDraw.Draw(image)
             draw.text((-bbox[0], -bbox[1]), text, font=font, fill="black")
