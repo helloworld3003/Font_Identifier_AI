@@ -272,13 +272,15 @@ def _mp_fn(index, flags):
         num_batches=VIRTUAL_EPOCH_BATCHES
     )
     
-    # CRITICAL TPU FIX: Kaggle Docker containers randomly kill background workers. 
-    # Because PyTorch XLA already spawns 8 main processes, setting num_workers=0 
-    # still gives you 8-way parallel data loading! This is fast AND crash-proof.
+    # CRITICAL FIX: PyTorch DataLoader Worker Process Rotation.
+    # By setting num_workers=2 and persistent_workers=False, PyTorch will automatically DESTROY
+    # the background rendering processes at the end of every epoch (1250 batches). 
+    # This completely flushes the 16GB C++ Pillow/FreeType cache memory leak that caused SIGKILL.
     dataloader = DataLoader(
         dataset, 
         batch_sampler=batch_sampler, 
-        num_workers=0, 
+        num_workers=2, 
+        persistent_workers=False,
         pin_memory=False # pin_memory is only for CUDA GPUs, it causes memory leaks on TPUs!
     )
     

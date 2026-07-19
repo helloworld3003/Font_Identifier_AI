@@ -22,6 +22,7 @@ eval_results/
 fonts-main/
 fonts-main.zip
 models/
+tests/
 
 # # PyTorch Models & Weights
 # *.pth
@@ -34,11 +35,11 @@ models/
 # *.csv
 !requirements.txt
 *.zip
-
+faiss_mapping.csv
 # Generated Output Images
 visual_result.png
 Screenshot*.png
-
+14-simple-tips-to-save-ram-memory-for-1-gb-dataset.ipynb
 # IDE / OS Files
 .vscode/
 .idea/

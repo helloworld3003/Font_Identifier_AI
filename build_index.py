@@ -23,9 +23,9 @@ EMBEDDING_SIZE = 512
 MODEL_PATH = "best_model.pth"
 INDEX_PATH = "font_embeddings.index"
 MAPPING_PATH = "faiss_mapping.csv"
-# We drastically reduce CHUNK_SIZE so if 1 corrupted font detonates a 30GB OOM, 
-# it only takes down 500 fonts with it instead of 10,000!
-CHUNK_SIZE = 500 
+# Since we proved there are no Decompression Bombs, we can use a massive CHUNK_SIZE
+# to reduce the overhead of spinning up the GPU Python Subprocess.
+CHUNK_SIZE = 5000 
 
 CANONICAL_STRINGS = ["AaBbCc", "xyz123", "0OIl", "gjpqy", "Test 00"]
 
@@ -114,7 +114,13 @@ def process_chunk_worker(chunk_idx, chunk_files, npy_path, csv_path):
 
         transform = get_inference_transform()
         dataset = FontRenderDataset(chunk_files, transform=transform)
-        dataloader = DataLoader(dataset, batch_size=128, num_workers=0, pin_memory=False)
+        # Use num_workers=4 for incredibly fast CPU rendering.
+        # persistent_workers=False ensures PyTorch destroys the workers after the chunk finishes,
+        # forcefully reclaiming all C++ Pillow memory leaks from the OS!
+        dataloader = DataLoader(
+            dataset, batch_size=128, num_workers=4, 
+            persistent_workers=False, pin_memory=False
+        )
 
         chunk_vectors = []
         chunk_mapping = []
