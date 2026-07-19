@@ -140,7 +140,6 @@ def build_index():
     else:
         ttf_dir_actual = TTF_DIR
 
-    print(f"Scanning for font files in {ttf_dir_actual}... (This may take a minute for 185,000+ files)")
     ttf_files = list(Path(ttf_dir_actual).rglob("*.ttf")) + list(Path(ttf_dir_actual).rglob("*.otf"))
     print(f"Found {len(ttf_files)} fonts to index in {ttf_dir_actual}.")
 
@@ -148,7 +147,7 @@ def build_index():
     dataloader = DataLoader(
         dataset,
         batch_size=512, # Drastically increased from 32 to peg the GPUs at 100%
-        num_workers=0, # Fixed to 0 to prevent Kaggle Docker OOM killing the workers silently!
+        num_workers=4,
         pin_memory=True
     )
 
