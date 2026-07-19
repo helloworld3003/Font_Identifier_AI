@@ -186,6 +186,11 @@ def _mp_fn(index, flags):
     import torch_xla.core.xla_model as xm
     import torch_xla.distributed.parallel_loader as pl
     
+    # CRITICAL FIX: Disable OpenCV multithreading inside workers to prevent DataLoader crashes on Kaggle
+    import cv2
+    cv2.setNumThreads(0)
+    cv2.ocl.setUseOpenCL(False)
+    
     # 1. Acquire current TPU core device
     device = xm.xla_device()
     xm.master_print(f"Executing Deep Metric Learning on 8 Google Cloud TPU Cores.")
@@ -288,6 +293,12 @@ def _mp_fn(index, flags):
                 xm.master_print(f"Epoch {epoch}/{MAX_EPOCHS} | Batch {batch_idx + 1}/{VIRTUAL_EPOCH_BATCHES} | Loss: {current_loss:.4f}")
         
         avg_loss = running_loss / (batch_idx + 1)
+        
+        # CRITICAL XLA FIX: We MUST synchronize the average loss across all 8 cores!
+        # If we don't, each core will have a slightly different loss, causing them to diverge at the 
+        # 'if avg_loss < best_loss' check. If one core decides to save and another doesn't, the TPU instantly deadlocks!
+        avg_loss = xm.mesh_reduce("loss_reduce", avg_loss, np.mean)
+        
         scheduler.step()
         epoch_time = time.time() - start_time
         
