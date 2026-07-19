@@ -37,25 +37,39 @@ logger = logging.getLogger(__name__)
 
 # Check if running on Kaggle and auto-mount the dataset to prevent symlink errors
 kaggle_input_dir = Path("/kaggle/input")
+TTF_DIR = "ttf_files"
+
 if kaggle_input_dir.exists():
-    try:
-        target_dir = None
-        for d in kaggle_input_dir.rglob("ttf_files"):
-            if d.is_dir():
-                target_dir = d
+    # 1. Try the exact Kaggle path first
+    exact_path = Path("/kaggle/input/datasets/tapomoysarkar/ttf-files-for-fonts/ttf_files/ttf_files")
+    exact_path2 = Path("/kaggle/input/ttf-files-for-fonts/ttf_files/ttf_files")
+    exact_path3 = Path("/kaggle/input/ttf-files-for-fonts/ttf_files")
+    
+    if exact_path.exists():
+        TTF_DIR = str(exact_path)
+    elif exact_path2.exists():
+        TTF_DIR = str(exact_path2)
+    elif exact_path3.exists():
+        TTF_DIR = str(exact_path3)
+    else:
+        # 2. Use os.walk with followlinks=True because pathlib.rglob SILENTLY IGNORES Kaggle symlinks!
+        found = False
+        for root, dirs, files in os.walk("/kaggle/input", followlinks=True):
+            if "ttf_files_2" in root:
+                continue # Skip the secondary dataset
+                
+            if "ttf_files" in dirs:
+                TTF_DIR = os.path.join(root, "ttf_files")
+                found = True
                 break
                 
-        if target_dir:
-            TTF_DIR = str(target_dir)
-        else:
-            first_ttf = next(kaggle_input_dir.rglob("*.ttf"))
-            TTF_DIR = str(first_ttf.parent)
-            
-        logger.info(f"Auto-detected Kaggle dataset at: {TTF_DIR}")
-    except StopIteration:
-        TTF_DIR = "ttf_files"
-else:
-    TTF_DIR = "ttf_files"
+        if not found:
+            for root, dirs, files in os.walk("/kaggle/input", followlinks=True):
+                if any(f.endswith('.ttf') for f in files):
+                    TTF_DIR = root
+                    break
+                    
+    logger.info(f"Auto-detected Kaggle dataset at: {TTF_DIR}")
 BATCH_SIZE = 512
 M_PER_CLASS = 4
 EMBEDDING_SIZE = 512
