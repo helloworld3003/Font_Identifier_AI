@@ -1,4 +1,5 @@
 import os
+import gc
 import random
 import string
 import logging
@@ -201,8 +202,14 @@ class DynamicFontDataset(Dataset):
             
             final_image = Image.new("RGB", (target_w, target_h), "white")
             x = (target_w - new_w) // 2
-            y = (target_h - new_h) // 2
             final_image.paste(image, (x, y))
+            
+            # Explicitly clean up C-level Pillow resources to prevent memory leaks!
+            del draw
+            del temp_draw
+            del font
+            del temp_image
+            del image
             
         except Exception:
             return self.__getitem__(random.randint(0, len(self.ttf_files) - 1))
@@ -339,6 +346,13 @@ def _mp_fn(index, flags):
             
             if (batch_idx + 1) % 100 == 0:
                 xm.master_print(f"Epoch {epoch}/{MAX_EPOCHS} | Batch {batch_idx + 1}/{VIRTUAL_EPOCH_BATCHES} | Loss: {current_loss:.4f}")
+                
+            # Physically purge Python garbage collector
+            del images
+            del labels
+            del embeddings
+            del loss
+            gc.collect()
         
         avg_loss = running_loss / (batch_idx + 1)
         
