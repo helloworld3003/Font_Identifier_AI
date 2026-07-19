@@ -128,11 +128,9 @@ def build_index():
     else:
         print(f"Warning: {MODEL_PATH} not found. Using untrained weights for demonstration.")
     
-    # Wrap in DataParallel to utilize both Kaggle T4 GPUs
-    if torch.cuda.device_count() > 1:
-        print(f"Let's use {torch.cuda.device_count()} GPUs!")
-        model = torch.nn.DataParallel(model)
-        
+    # DO NOT use DataParallel! PyTorch DataParallel uses CPU threads to scatter/gather batches,
+    # which notoriously leaks massive amounts of CPU RAM on Kaggle over thousands of batches!
+    # A single T4 GPU is fast enough for inference.
     model.to(device)
     model.eval()
 
