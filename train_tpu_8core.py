@@ -254,13 +254,13 @@ def _mp_fn(index, flags):
         num_batches=VIRTUAL_EPOCH_BATCHES
     )
     
-    # CRITICAL TPU FIX: By enabling 'file_system' sharing strategy above, we bypassed the /dev/shm crash!
-    # We can now safely use num_workers=2 (16 total workers across 8 cores) to maximize speed without OOMing!
+    # CRITICAL TPU FIX: Kaggle Docker containers randomly kill background workers. 
+    # Because PyTorch XLA already spawns 8 main processes, setting num_workers=0 
+    # still gives you 8-way parallel data loading! This is fast AND crash-proof.
     dataloader = DataLoader(
         dataset, 
         batch_sampler=batch_sampler, 
-        num_workers=2, 
-        persistent_workers=True, # Keep workers alive to prevent RAM spikes between epochs
+        num_workers=0, 
         pin_memory=False # pin_memory is only for CUDA GPUs, it causes memory leaks on TPUs!
     )
     
