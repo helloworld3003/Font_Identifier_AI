@@ -246,17 +246,17 @@ def _mp_fn(index, flags):
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         
-        # PyTorch XLA CRITICAL FIX: Explicitly move optimizer momentum tensors to TPU
-        for state in optimizer.state.values():
-            for k, v in state.items():
-                if isinstance(v, torch.Tensor):
-                    state[k] = v.to(device)
-                    
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        start_epoch = checkpoint['epoch'] + 1
-        best_loss = checkpoint['best_loss']
-        epochs_no_improve = checkpoint['epochs_no_improve']
-        xm.master_print(f"Resumed from epoch {checkpoint['epoch']} with best loss {best_loss:.4f}.")
+    # PyTorch XLA CRITICAL FIX: Explicitly move optimizer momentum tensors to TPU
+    for state in optimizer.state.values():
+        for k, v in state.items():
+            if isinstance(v, torch.Tensor):
+                state[k] = v.to(device)
+                
+    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    start_epoch = checkpoint['epoch'] + 1
+    best_loss = checkpoint['best_loss']
+    epochs_no_improve = checkpoint['epochs_no_improve']
+    xm.master_print(f"Resumed from epoch {checkpoint['epoch']} with best loss {best_loss:.4f}.")
     xm.master_print("Starting XLA 8-Core Training Pipeline...")
     
     for epoch in range(start_epoch, MAX_EPOCHS + 1):
