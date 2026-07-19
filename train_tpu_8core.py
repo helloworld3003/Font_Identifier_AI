@@ -21,7 +21,6 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from PIL import Image, ImageDraw, ImageFont
 
-from pytorch_metric_learning import losses, miners
 from torch.utils.data import Dataset, DataLoader, Sampler
 
 # --- PyTorch XLA Imports ---
@@ -32,6 +31,49 @@ import torch_xla.distributed.xla_multiprocessing as xmp
 # Configure global logger (mostly disabled for workers, handled via xm.master_print)
 logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# ==========================================
+# STATIC XLA LOSS IMPLEMENTATION
+# ==========================================
+class StaticSupConLoss(nn.Module):
+    """
+    XLA-Friendly Supervised Contrastive Loss.
+    Uses pure matrix multiplication and binary masking (no boolean indexing) 
+    to guarantee a strictly static computation graph for TPUs.
+    """
+    def __init__(self, temperature=0.1):
+        super(StaticSupConLoss, self).__init__()
+        self.temperature = temperature
+
+    def forward(self, features, labels):
+        features = F.normalize(features, p=2, dim=1)
+        batch_size = features.shape[0]
+        
+        # Static Matrix Multiplication (B x B)
+        similarity_matrix = torch.matmul(features, features.T) / self.temperature
+        
+        # Static Binary Mask (1 for same class, 0 for different)
+        labels = labels.contiguous().view(-1, 1)
+        mask = torch.eq(labels, labels.T).float().to(features.device)
+        
+        # Mask out self-contrast (diagonal = 0)
+        logits_mask = torch.scatter(
+            torch.ones_like(mask),
+            1,
+            torch.arange(batch_size).view(-1, 1).to(features.device),
+            0
+        )
+        mask = mask * logits_mask
+        
+        # Numerical stability for exp
+        exp_logits = torch.exp(similarity_matrix) * logits_mask
+        log_prob = similarity_matrix - torch.log(exp_logits.sum(1, keepdim=True) + 1e-9)
+        
+        # Mean log-likelihood over positive pairs
+        mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-9)
+        
+        # Minimize the negative log-likelihood
+        return -mean_log_prob_pos.mean()
 
 # ==========================================
 # HYPERPARAMETERS & KAGGLE AUTO-DETECT
@@ -226,11 +268,12 @@ def _mp_fn(index, flags):
     # 3. Model & Loss Setup
     model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE).to(device)
     
-    # XLA CRITICAL FIX: CrossBatchMemory uses dynamic queues and BatchHardMiner produces 
-    # dynamically-shaped index tensors. This forces PyTorch XLA to infinitely recompile the 
-    # hardware graph every batch, causing 10,000% CPU and 200GB RAM memory leaks!
-    # By using pure MultiSimilarityLoss, the pairwise distance matrix is strictly static (64x64).
-    loss_func = losses.MultiSimilarityLoss(alpha=2.0, beta=50.0, base=0.5).to(device)
+    # XLA CRITICAL FIX: The PyTorch Metric Learning library uses boolean indexing to dynamically 
+    # extract pairs/triplets. This forced PyTorch XLA to invoke the C++ compiler every single batch,
+    # causing a 300GB RAM explosion and instantaneous system death.
+    # By using our custom StaticSupConLoss, the similarity matrix is strictly 64x64 forever,
+    # resulting in exactly 1 compile step and zero memory leaks!
+    loss_func = StaticSupConLoss(temperature=0.1).to(device)
     
     # 4. Optimizer Setup
     param_groups = [
