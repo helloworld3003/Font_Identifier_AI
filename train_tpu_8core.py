@@ -139,15 +139,18 @@ def get_train_transforms():
     ])
 
 class VirtualEpochBatchSampler(Sampler):
-    def __init__(self, num_classes, batch_size, m_per_class, num_batches):
+    def __init__(self, num_classes, batch_size, m_per_class, num_batches, start_batch=0):
         self.num_classes = num_classes
         self.batch_size = batch_size
         self.m_per_class = m_per_class
         self.num_batches = num_batches
         self.classes_per_batch = self.batch_size // self.m_per_class
+        self.start_batch = start_batch
 
     def __iter__(self):
-        for _ in range(self.num_batches):
+        # By skipping the first start_batch iterations, the DataLoader instantly fast-forwards
+        # to where it left off without wasting time loading old images!
+        for _ in range(self.start_batch, self.num_batches):
             classes = np.random.choice(self.num_classes, self.classes_per_batch, replace=False)
             batch = []
             for c in classes:
@@ -155,7 +158,7 @@ class VirtualEpochBatchSampler(Sampler):
             yield batch
 
     def __len__(self):
-        return self.num_batches
+        return self.num_batches - self.start_batch
 
 class DynamicFontDataset(Dataset):
     def __init__(self, ttf_dir, transform=None):
@@ -306,6 +309,7 @@ def _mp_fn(index, flags):
     best_loss = float('inf')
     epochs_no_improve = 0
     start_epoch = 1
+    start_batch = 0
     
     script_dir = os.path.dirname(os.path.abspath(__file__))
     CHECKPOINT_PATH = os.path.join(script_dir, "checkpoint.pth")
@@ -328,10 +332,19 @@ def _mp_fn(index, flags):
                     state[k] = v.to(device)
                     
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        start_epoch = checkpoint['epoch'] + 1
-        best_loss = checkpoint['best_loss']
-        epochs_no_improve = checkpoint['epochs_no_improve']
-        xm.master_print(f"Resumed from epoch {checkpoint['epoch']} with best loss {best_loss:.4f}.")
+        
+        # Mid-Epoch Resume Logic
+        resume_epoch = checkpoint.get('epoch', 1)
+        resume_batch = checkpoint.get('batch_idx', 0)
+        
+        if resume_batch >= VIRTUAL_EPOCH_BATCHES:
+            start_epoch = resume_epoch + 1
+            start_batch = 0
+            xm.master_print(f"Resumed from completed Epoch {resume_epoch} with best loss {best_loss:.4f}.")
+        else:
+            start_epoch = resume_epoch
+            start_batch = resume_batch
+            xm.master_print(f"Resumed MID-EPOCH from Epoch {start_epoch}, Batch {start_batch} with best loss {best_loss:.4f}.")
         
     # --- ROBUST CSV SELF-CHECK & RECOVERY ---
     import csv
@@ -391,12 +404,30 @@ def _mp_fn(index, flags):
         model.train()
         running_loss = 0.0
         
+        batch_sampler = VirtualEpochBatchSampler(
+            num_classes=len(dataset),
+            batch_size=BATCH_SIZE,
+            m_per_class=M_PER_CLASS,
+            num_batches=VIRTUAL_EPOCH_BATCHES,
+            start_batch=start_batch
+        )
+        
+        dataloader = DataLoader(
+            dataset, 
+            batch_sampler=batch_sampler, 
+            num_workers=2, 
+            persistent_workers=False,
+            pin_memory=False
+        )
+        
         # Parallel Loader forces data directly onto the TPU matrix
         mp_device_loader = pl.MpDeviceLoader(dataloader, device)
         
         start_time = time.time()
         
-        for batch_idx, (images, labels) in enumerate(mp_device_loader):
+        for relative_batch_idx, (images, labels) in enumerate(mp_device_loader):
+            batch_idx = relative_batch_idx + start_batch
+            
             optimizer.zero_grad()
             
             # XLA handles bfloat16 seamlessly under the hood
@@ -418,6 +449,20 @@ def _mp_fn(index, flags):
                     with open(LOG_CSV_PATH, 'a', newline='') as f:
                         writer = csv.writer(f)
                         writer.writerow([epoch, batch_idx + 1, f"{current_loss:.4f}", time.time()])
+                        
+            # Save Mid-Epoch Checkpoint every 250 batches so we don't lose progress if Kaggle crashes!
+            if (batch_idx + 1) % 250 == 0:
+                checkpoint_state = {
+                    'epoch': epoch,
+                    'batch_idx': batch_idx + 1,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'best_loss': best_loss,
+                    'epochs_no_improve': epochs_no_improve
+                }
+                xm.save(checkpoint_state, CHECKPOINT_PATH)
+                xm.master_print(f"Mid-Epoch Checkpoint Saved at Batch {batch_idx + 1}")
                         
             # Physically purge Python garbage collector
             del images
@@ -451,6 +496,7 @@ def _mp_fn(index, flags):
         # Save complete training state (Must be executed by all cores, but xm.save manages writing safely)
         checkpoint_state = {
             'epoch': epoch,
+            'batch_idx': VIRTUAL_EPOCH_BATCHES, # Mark epoch as completely finished
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
@@ -472,6 +518,9 @@ def _mp_fn(index, flags):
             checkpoint_state['epochs_no_improve'] = epochs_no_improve
             xm.save(checkpoint_state, CHECKPOINT_PATH)
             xm.master_print(f"No improvement. Early stopping patience: {epochs_no_improve}/{PATIENCE}. Saved checkpoint.pth")
+            
+        # Reset start_batch for the next epoch
+        start_batch = 0
             
         import sys
         sys.stdout.flush()
