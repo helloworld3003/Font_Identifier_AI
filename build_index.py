@@ -138,8 +138,8 @@ def build_index():
     dataset = FontRenderDataset(ttf_files, transform=transform)
     dataloader = DataLoader(
         dataset,
-        batch_size=512, # Drastically increased from 32 to peg the GPUs at 100%
-        num_workers=4,
+        batch_size=128, # Reduced to prevent Kaggle CPU RAM crashes
+        num_workers=2,  # Maximum stable background workers for Kaggle
         pin_memory=True
     )
 
