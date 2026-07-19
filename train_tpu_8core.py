@@ -362,6 +362,29 @@ def _mp_fn(index, flags):
             with open(LOG_CSV_PATH, 'w', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow(["epoch", "batch", "loss", "timestamp"])
+                
+    # CRITICAL XLA SYNC: Block all 8 cores until the Master Core finishes rewriting the CSV!
+    xm.rendezvous("csv_sync")
+    
+    # All 8 cores now independently parse the cleaned CSV to recover the historic best_loss.
+    # This guarantees the script NEVER forgets its lowest loss even if checkpoint.pth is tampered with!
+    if os.path.exists(LOG_CSV_PATH):
+        csv_best_loss = float('inf')
+        with open(LOG_CSV_PATH, 'r') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                try:
+                    if len(row) > 2 and row[1] == "EPOCH_SUMMARY":
+                        val = float(row[2])
+                        if val < csv_best_loss:
+                            csv_best_loss = val
+                except Exception:
+                    pass
+        
+        if csv_best_loss < best_loss:
+            best_loss = csv_best_loss
+            xm.master_print(f"Recovered superior best_loss from CSV ground truth: {best_loss:.4f}")
+            
     xm.master_print("Starting XLA 8-Core Training Pipeline...")
     
     for epoch in range(start_epoch, MAX_EPOCHS + 1):
