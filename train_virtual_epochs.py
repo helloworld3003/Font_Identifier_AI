@@ -35,7 +35,27 @@ from tqdm import tqdm
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-TTF_DIR = "ttf_files"
+# Check if running on Kaggle and auto-mount the dataset to prevent symlink errors
+kaggle_input_dir = Path("/kaggle/input")
+if kaggle_input_dir.exists():
+    try:
+        target_dir = None
+        for d in kaggle_input_dir.rglob("ttf_files"):
+            if d.is_dir():
+                target_dir = d
+                break
+                
+        if target_dir:
+            TTF_DIR = str(target_dir)
+        else:
+            first_ttf = next(kaggle_input_dir.rglob("*.ttf"))
+            TTF_DIR = str(first_ttf.parent)
+            
+        logger.info(f"Auto-detected Kaggle dataset at: {TTF_DIR}")
+    except StopIteration:
+        TTF_DIR = "ttf_files"
+else:
+    TTF_DIR = "ttf_files"
 BATCH_SIZE = 512
 M_PER_CLASS = 4
 EMBEDDING_SIZE = 512
@@ -65,15 +85,7 @@ def get_train_transforms():
     return A.Compose([
         A.Rotate(limit=8, p=0.4),
         A.Perspective(scale=(0.05, 0.09), p=0.3),
-        A.ImageCompression(quality_lower=50, quality_upper=95, p=0.4),
-        A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
         A.GaussianBlur(blur_limit=(3, 5), p=0.3),
-        
-        # Micro-Geometry Augmentations simulating ink bleed and fading
-        A.OneOf([
-            A.Morphological(scale=(2, 2), op='erosion', p=0.5),
-            A.Morphological(scale=(2, 2), op='dilation', p=0.5)
-        ], p=0.4),
         
         A.Lambda(image=simulate_adaptive_threshold, p=0.4),
         A.InvertImg(p=0.2), # Handles white-on-black text styles
