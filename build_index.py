@@ -1,5 +1,6 @@
 import os
 import gc
+import sys
 import torch
 import faiss
 import numpy as np
@@ -10,6 +11,7 @@ import torchvision.transforms as T
 import torch.nn.functional as F
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
+import multiprocessing as mp
 
 # Import the correct modern model architecture
 from model import ConvNeXtFontEncoder
@@ -21,33 +23,12 @@ EMBEDDING_SIZE = 512
 MODEL_PATH = "best_model.pth"
 INDEX_PATH = "font_embeddings.index"
 MAPPING_PATH = "faiss_mapping.csv"
-CHUNK_SIZE = 10000 # Save embeddings to disk every 10,000 fonts to prevent RAM OOM
+CHUNK_SIZE = 10000 
 
 CANONICAL_STRINGS = ["AaBbCc", "xyz123", "0OIl", "gjpqy", "Test 00"]
 
 # ==========================================
-# 2. DATASET ROBUST KAGGLE AUTO-DETECT
-# ==========================================
-kaggle_input_dir = Path("/kaggle/input")
-if kaggle_input_dir.exists():
-    try:
-        target_dir = None
-        for d in kaggle_input_dir.rglob("ttf_files"):
-            if d.is_dir():
-                target_dir = d
-                break
-        if target_dir:
-            TTF_DIR = str(target_dir)
-        else:
-            first_ttf = next(kaggle_input_dir.rglob("*.ttf"))
-            TTF_DIR = str(first_ttf.parent)
-    except StopIteration:
-        TTF_DIR = "ttf_files"
-else:
-    TTF_DIR = "ttf_files"
-
-# ==========================================
-# 3. UTILITIES
+# 2. UTILITIES & DATASET
 # ==========================================
 def get_inference_transform():
     return T.Compose([
@@ -109,70 +90,37 @@ class FontRenderDataset(Dataset):
         return torch.stack(tensors), idx
 
 # ==========================================
-# 4. CHUNKED FAISS BUILDER
+# 3. ISOLATED SUBPROCESS WORKER
 # ==========================================
-def build_index():
-    print("=" * 60)
-    print("STARTING ROBUST T4 GPU CHUNKED INDEX BUILDER")
-    print("=" * 60)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
-    
-    if torch.cuda.is_available():
-        torch.backends.cudnn.benchmark = True # Extreme speedhack for static shapes
-
-    model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE)
-    if os.path.exists(MODEL_PATH):
-        model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
-        print(f"Loaded trained weights from {MODEL_PATH}")
-    
-    # Strictly bind to single GPU to absolutely prevent scatter/gather thread leaks
-    model.to(device)
-    model.eval()
-
-    transform = get_inference_transform()
-    
-    print(f"\nScanning for font files in {TTF_DIR}...")
-    all_files = list(Path(TTF_DIR).rglob("*.ttf")) + list(Path(TTF_DIR).rglob("*.otf"))
-    
-    print("Validating font headers to prevent C-level Segmentation Faults...")
-    ttf_files = []
-    for f in all_files:
-        try:
-            if os.path.getsize(f) > 1024: # Must be > 1KB
-                with open(f, 'rb') as file:
-                    head = file.read(4)
-                    if head in (b'\x00\x01\x00\x00', b'OTTO', b'ttcf', b'true'):
-                        ttf_files.append(f)
-        except Exception:
-            pass
-            
-    total_fonts = len(ttf_files)
-    print(f"Found {total_fonts} valid fonts (filtered out {len(all_files) - total_fonts} corrupted files).")
-
-    # Prepare temp directory for chunks
-    os.makedirs("faiss_chunks", exist_ok=True)
-    
-    # Process strictly in chunks
-    chunk_paths = []
-    
-    for chunk_idx in range(0, total_fonts, CHUNK_SIZE):
-        chunk_files = ttf_files[chunk_idx:chunk_idx+CHUNK_SIZE]
-        print(f"\n--- Processing Chunk {chunk_idx // CHUNK_SIZE + 1} (Fonts {chunk_idx} to {chunk_idx+len(chunk_files)}) ---")
+def process_chunk_worker(chunk_idx, chunk_files, npy_path, csv_path):
+    """
+    This function runs in a completely isolated OS process.
+    When it returns (or crashes), all C-level memory leaks are aggressively reclaimed by the OS.
+    """
+    try:
+        # Re-initialize CUDA inside the child process to avoid context corruption
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            torch.backends.cudnn.benchmark = False # Disable benchmarking to prevent VRAM spikes
         
+        model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE)
+        if os.path.exists(MODEL_PATH):
+            model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
+        
+        model.to(device)
+        model.eval()
+
+        transform = get_inference_transform()
         dataset = FontRenderDataset(chunk_files, transform=transform)
-        dataloader = DataLoader(
-            dataset,
-            batch_size=128, 
-            num_workers=0, # Physically prevent multiprocessing leaks
-            pin_memory=False
-        )
+        dataloader = DataLoader(dataset, batch_size=128, num_workers=0, pin_memory=False)
 
         chunk_vectors = []
         chunk_mapping = []
 
-        for batch_tensors, indices in tqdm(dataloader, desc="Extracting chunk"):
+        print(f"[Worker {chunk_idx // CHUNK_SIZE + 1}] Starting extraction of {len(chunk_files)} fonts...")
+        
+        # We don't use tqdm here because multiprocessing stdout overlaps. Just print progress periodically.
+        for batch_idx, (batch_tensors, indices) in enumerate(dataloader):
             B = batch_tensors.size(0)
             flat_batch = batch_tensors.view(B * 5, 3, 64, 256).to(device)
             
@@ -194,41 +142,103 @@ def build_index():
                     "font_name": ttf_path.stem
                 })
                 
-            # Physically purge Python garbage collector
             del flat_batch
             del batch_tensors
             del embeddings
             del avg_embeddings
             gc.collect()
+            
+            if (batch_idx + 1) % 10 == 0:
+                print(f"[Worker {chunk_idx // CHUNK_SIZE + 1}] Processed {(batch_idx + 1) * 128}/{len(chunk_files)} fonts")
 
-        # Save this chunk immediately to disk to prevent RAM bloat
         vectors_np = np.vstack(chunk_vectors).astype('float32')
+        np.save(npy_path, vectors_np)
+        pd.DataFrame(chunk_mapping).to_csv(csv_path, index=False)
+        
+        print(f"[Worker {chunk_idx // CHUNK_SIZE + 1}] Successfully saved to disk. Committing seppuku to free C-level RAM.")
+        sys.exit(0) # Explicitly kill the worker cleanly
+        
+    except Exception as e:
+        print(f"[Worker {chunk_idx // CHUNK_SIZE + 1}] FATAL EXCEPTION: {e}")
+        sys.exit(1)
+
+# ==========================================
+# 4. ORCHESTRATOR
+# ==========================================
+def build_index_orchestrator():
+    print("=" * 60)
+    print("STARTING ROBUST ISOLATED SUBPROCESS INDEX BUILDER")
+    print("=" * 60)
+    
+    # Auto-detect Kaggle Directory
+    kaggle_input_dir = Path("/kaggle/input")
+    if kaggle_input_dir.exists():
+        try:
+            target_dir = None
+            for d in kaggle_input_dir.rglob("ttf_files"):
+                if d.is_dir():
+                    target_dir = d
+                    break
+            if target_dir:
+                TTF_DIR = str(target_dir)
+            else:
+                first_ttf = next(kaggle_input_dir.rglob("*.ttf"))
+                TTF_DIR = str(first_ttf.parent)
+        except StopIteration:
+            TTF_DIR = "ttf_files"
+    else:
+        TTF_DIR = "ttf_files"
+
+    print(f"\nScanning for font files in {TTF_DIR}...")
+    all_files = list(Path(TTF_DIR).rglob("*.ttf")) + list(Path(TTF_DIR).rglob("*.otf"))
+    
+    print("Validating font headers to prevent C-level Segmentation Faults...")
+    ttf_files = []
+    for f in all_files:
+        try:
+            if os.path.getsize(f) > 1024:
+                with open(f, 'rb') as file:
+                    head = file.read(4)
+                    if head in (b'\x00\x01\x00\x00', b'OTTO', b'ttcf', b'true'):
+                        ttf_files.append(f)
+        except Exception:
+            pass
+            
+    total_fonts = len(ttf_files)
+    print(f"Found {total_fonts} valid fonts (filtered out {len(all_files) - total_fonts} corrupted files).")
+
+    os.makedirs("faiss_chunks", exist_ok=True)
+    chunk_paths = []
+    
+    for chunk_idx in range(0, total_fonts, CHUNK_SIZE):
+        chunk_files = ttf_files[chunk_idx:chunk_idx+CHUNK_SIZE]
         chunk_npy_path = f"faiss_chunks/vectors_{chunk_idx}.npy"
         chunk_csv_path = f"faiss_chunks/mapping_{chunk_idx}.csv"
         
-        np.save(chunk_npy_path, vectors_np)
-        pd.DataFrame(chunk_mapping).to_csv(chunk_csv_path, index=False)
-        chunk_paths.append((chunk_npy_path, chunk_csv_path))
+        print(f"\n--- Orchestrator: Spawning Isolated Worker for Chunk {chunk_idx // CHUNK_SIZE + 1} ---")
         
-        # Purge entire chunk from RAM
-        del vectors_np
-        del chunk_vectors
-        del chunk_mapping
-        del dataset
-        del dataloader
-        torch.cuda.empty_cache()
-        gc.collect()
+        # Spawn an entirely isolated Python process
+        p = mp.Process(target=process_chunk_worker, args=(chunk_idx, chunk_files, chunk_npy_path, chunk_csv_path))
+        p.start()
+        p.join() # The orchestrator waits safely while the worker takes the bullet
         
-        print(f"Chunk flushed safely to disk. RAM wiped.")
+        if p.exitcode != 0:
+            print(f"WARNING: Subprocess {chunk_idx // CHUNK_SIZE + 1} terminated with abnormal exit code: {p.exitcode}")
+            if p.exitcode == -11:
+                print(">>> This was a Segmentation Fault caused by a malicious font file in the data leak! The worker took the hit, but the main orchestrator survives.")
+            # We still append the chunk paths, in case it managed to save before dying, or just skip it if files don't exist
+            
+        if os.path.exists(chunk_npy_path) and os.path.exists(chunk_csv_path):
+            chunk_paths.append((chunk_npy_path, chunk_csv_path))
+        else:
+            print(f"ERROR: Chunk {chunk_idx // CHUNK_SIZE + 1} failed to write files. It will be skipped from the final FAISS index.")
 
     print("\n" + "=" * 60)
     print("ALL CHUNKS PROCESSED. ASSEMBLING FINAL FAISS INDEX...")
     
-    # Initialize FAISS Index
     index = faiss.IndexFlatIP(EMBEDDING_SIZE)
     all_mapping = []
     
-    # Load chunks one by one to assemble FAISS
     for npy_path, csv_path in tqdm(chunk_paths, desc="Assembling Index"):
         vectors_np = np.load(npy_path)
         index.add(vectors_np)
@@ -236,17 +246,13 @@ def build_index():
         chunk_df = pd.read_csv(csv_path)
         all_mapping.append(chunk_df)
         
-        # Purge loaded array
         del vectors_np
         del chunk_df
         gc.collect()
         
     faiss.write_index(index, INDEX_PATH)
     final_df = pd.concat(all_mapping, ignore_index=True)
-    
-    # Kaggle RAM Notebook Tip 2: Downcast datatypes to save memory
     final_df['faiss_id'] = pd.to_numeric(final_df['faiss_id'], downcast='unsigned')
-    
     final_df.to_csv(MAPPING_PATH, index=False)
     
     print(f"SUCCESS! Robust FAISS index saved to {INDEX_PATH}")
@@ -254,4 +260,6 @@ def build_index():
     print("=" * 60)
 
 if __name__ == "__main__":
-    build_index()
+    # CRITICAL: Must use 'spawn' to prevent CUDA initialization errors in subprocesses
+    mp.set_start_method('spawn', force=True)
+    build_index_orchestrator()
