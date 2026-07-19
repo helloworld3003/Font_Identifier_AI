@@ -138,9 +138,9 @@ def build_index():
     dataset = FontRenderDataset(ttf_files, transform=transform)
     dataloader = DataLoader(
         dataset,
-        batch_size=128, # Reduced to prevent Kaggle CPU RAM crashes
-        num_workers=2,  # Maximum stable background workers for Kaggle
-        pin_memory=True
+        batch_size=128, 
+        num_workers=0,  # CRITICAL: Kaggle CANNOT handle background TTF rendering. Must be 0.
+        pin_memory=False # CRITICAL: pin_memory=True consumes too much host RAM and causes OOM.
     )
 
     # Initialize FAISS Index (Inner Product for Cosine Similarity since vectors are L2 normalized)
