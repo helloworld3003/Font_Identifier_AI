@@ -481,13 +481,11 @@ def _mp_fn(index, flags):
             # XLA handles bfloat16 seamlessly under the hood
             embeddings = model(images)
             
-            # CRITICAL FIX: Global Contrastive Syncing (Cross-Batch Memory)
-            # Gather embeddings and labels from all 8 cores to massively inflate the batch size
-            # from 64 (16 fonts) to 512 (128 fonts)! This forces the AI to learn deep features.
-            global_embeddings = xm.all_gather(embeddings, dim=0)
-            global_labels = xm.all_gather(labels, dim=0)
-            
-            loss = loss_func(global_embeddings, global_labels)
+            # PyTorch XLA CRASH FIX: We cannot use xm.all_gather on the embeddings before loss.backward() 
+            # because the XLA autograd engine does not have a registered kernel for it, which causes
+            # a massive C++ Segfault. We will compute ArcFace strictly on the local batch, which is
+            # still incredibly difficult and forces deep feature learning!
+            loss = loss_func(embeddings, labels)
             
             loss.backward()
             
