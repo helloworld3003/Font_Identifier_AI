@@ -138,3 +138,40 @@ python build_index.py
 # Pass the original image and bounding boxes as xmin,ymin,xmax,ymax
 python inference.py sample.jpg 100,100,300,200 400,100,500,200
 ```
+
+---
+
+## ☁️ Running on Kaggle (Exact Steps)
+
+Because training on 185,000 fonts requires serious cloud infrastructure, here is the exact step-by-step code you can copy and paste into a Kaggle Notebook to execute the entire pipeline on a TPU v3-8 VM.
+
+**Step 1: Clone the GitHub Repository**
+```python
+!git clone https://github.com/helloworld3003/Font_Identifier_AI.git
+```
+
+**Step 2: Install Required Libraries**
+```python
+!pip install faiss-cpu timm albumentations pytorch-metric-learning otf2ttf
+```
+
+**Step 3: Download the Large Model Weights (Git LFS)**
+```python
+!apt-get install -y git-lfs
+!cd /kaggle/working/Font_Identifier_AI && git lfs install && git lfs pull
+```
+
+**Step 4: Pull Latest Updates (Optional)**
+```python
+!cd /kaggle/working/Font_Identifier_AI && git pull origin main
+```
+
+**Step 5: Start TPU Training**
+```python
+!cd /kaggle/working/Font_Identifier_AI && python train_tpu_8core.py
+```
+
+**Step 6: Build the FAISS Index**
+```python
+!cd /kaggle/working/Font_Identifier_AI && python build_index.py
+```
