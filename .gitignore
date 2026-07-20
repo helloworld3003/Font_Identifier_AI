@@ -27,6 +27,7 @@ simple_model_190726/
 simple_model_200726/
 adv_model_200726/
 adv_model_210726/
+kaggle_outputs/
 # # PyTorch Models & Weights
 # *.pth
 # best_metric_model.pth
@@ -35,7 +36,7 @@ adv_model_210726/
 
 # FAISS Databases & CSV Metadata
 *.index
-# *.csv
+*.csv
 !requirements.txt
 *.zip
 faiss_mapping.csv
