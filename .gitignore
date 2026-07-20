@@ -25,6 +25,7 @@ models/
 tests/
 simple_model_190726/
 simple_model_200726/
+adv_model_200726/
 # # PyTorch Models & Weights
 # *.pth
 # best_metric_model.pth
