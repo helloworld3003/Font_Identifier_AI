@@ -98,11 +98,14 @@ class FontRenderDataset(Dataset):
 # ==========================================
 # 3. ISOLATED SUBPROCESS WORKER
 # ==========================================
-def process_chunk_worker(chunk_idx, chunk_files, npy_path, csv_path):
+def process_chunk_worker(chunk_idx, chunk_files, npy_path, csv_path, gpu_id):
     """
     This function runs in a completely isolated OS process.
     When it returns (or crashes), all C-level memory leaks are aggressively reclaimed by the OS.
     """
+    # Isolate this specific process to only see the assigned GPU
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    
     try:
         # Re-initialize CUDA inside the child process to avoid context corruption
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -204,64 +207,77 @@ def build_index_orchestrator():
     print(f"\nScanning for font files in {TTF_DIR}...")
     all_files = list(Path(TTF_DIR).rglob("*.ttf")) + list(Path(TTF_DIR).rglob("*.otf"))
     
-    print("Validating font headers to prevent C-level Segmentation Faults...")
-    
     blacklist = set()
     if os.path.exists("bomb_blacklist.txt"):
         with open("bomb_blacklist.txt", "r") as f:
             blacklist = set([line.strip() for line in f.readlines()])
             
-    ttf_files = []
-    for f in all_files:
-        if str(f) in blacklist:
-            continue
-        try:
-            if os.path.getsize(f) > 1024:
-                with open(f, 'rb') as file:
-                    head = file.read(4)
-                    if head in (b'\x00\x01\x00\x00', b'OTTO', b'ttcf', b'true'):
-                        ttf_files.append(f)
-        except Exception:
-            pass
-            
+    ttf_files = [f for f in all_files if str(f) not in blacklist]
     total_fonts = len(ttf_files)
-    print(f"Found {total_fonts} valid fonts (filtered out {len(all_files) - total_fonts} corrupted files).")
+    print(f"Found {total_fonts} fonts (filtered out {len(all_files) - total_fonts} blacklisted files).")
 
     os.makedirs("faiss_chunks", exist_ok=True)
     chunk_paths = []
     
-    for chunk_idx in range(0, total_fonts, CHUNK_SIZE):
-        chunk_files = ttf_files[chunk_idx:chunk_idx+CHUNK_SIZE]
-        chunk_npy_path = f"faiss_chunks/vectors_{chunk_idx}.npy"
-        chunk_csv_path = f"faiss_chunks/mapping_{chunk_idx}.csv"
-        
-        chunk_number = chunk_idx // CHUNK_SIZE + 1
-        success = False
-        retries = 0
-        MAX_RETRIES = 10
-        
-        while not success and retries < MAX_RETRIES:
-            print(f"\n--- Orchestrator: Spawning Isolated Worker for Chunk {chunk_number} (Attempt {retries + 1}/{MAX_RETRIES}) ---")
+    import time
+    chunk_queue = [{'chunk_idx': idx, 'retries': 0} for idx in range(0, total_fonts, CHUNK_SIZE)]
+    active_processes = []
+    available_gpus = [0, 1]  # Kaggle Dual T4 GPUs
+    MAX_RETRIES = 10
+    
+    while chunk_queue or active_processes:
+        # 1. Check active processes for completion
+        for i in range(len(active_processes) - 1, -1, -1):
+            proc_info = active_processes[i]
+            p = proc_info['process']
             
-            # Spawn an entirely isolated Python process
-            p = mp.Process(target=process_chunk_worker, args=(chunk_idx, chunk_files, chunk_npy_path, chunk_csv_path))
-            p.start()
-            p.join() # The orchestrator waits safely while the worker takes the bullet
-            
-            if p.exitcode != 0:
-                print(f"WARNING: Subprocess {chunk_number} terminated with abnormal exit code: {p.exitcode}")
-                if p.exitcode == -11:
-                    print(">>> This was a Segmentation Fault caused by a malicious font file! The worker took the hit, but the main orchestrator survives.")
+            if not p.is_alive():
+                p.join()
+                chunk_idx = proc_info['chunk_idx']
+                chunk_number = chunk_idx // CHUNK_SIZE + 1
                 
-            if os.path.exists(chunk_npy_path) and os.path.exists(chunk_csv_path):
-                chunk_paths.append((chunk_npy_path, chunk_csv_path))
-                success = True
-            else:
-                retries += 1
-                if retries < MAX_RETRIES:
-                    print(f"ERROR: Chunk {chunk_number} failed to write files. Retrying immediately...")
+                if p.exitcode != 0:
+                    print(f"WARNING: Subprocess {chunk_number} on GPU {proc_info['gpu_id']} terminated with abnormal exit code: {p.exitcode}")
+                    if p.exitcode == -11:
+                        print(">>> This was a Segmentation Fault! The worker took the hit, but the main orchestrator survives.")
+                
+                if os.path.exists(proc_info['npy_path']) and os.path.exists(proc_info['csv_path']):
+                    chunk_paths.append((proc_info['npy_path'], proc_info['csv_path']))
                 else:
-                    print(f"CRITICAL ERROR: Chunk {chunk_number} failed {MAX_RETRIES} consecutive times! Skipping permanently to prevent an infinite Kaggle loop.")
+                    retries = proc_info['retries'] + 1
+                    if retries < MAX_RETRIES:
+                        print(f"ERROR: Chunk {chunk_number} failed. Retrying (Attempt {retries + 1}/{MAX_RETRIES})...")
+                        chunk_queue.insert(0, {'chunk_idx': chunk_idx, 'retries': retries})
+                    else:
+                        print(f"CRITICAL ERROR: Chunk {chunk_number} failed {MAX_RETRIES} times! Skipping permanently.")
+                
+                available_gpus.append(proc_info['gpu_id'])
+                active_processes.pop(i)
+                
+        # 2. Spawn new processes if we have available GPUs and pending chunks
+        while available_gpus and chunk_queue:
+            gpu_id = available_gpus.pop(0)
+            chunk_task = chunk_queue.pop(0)
+            chunk_idx = chunk_task['chunk_idx']
+            chunk_number = chunk_idx // CHUNK_SIZE + 1
+            chunk_files = ttf_files[chunk_idx:chunk_idx+CHUNK_SIZE]
+            chunk_npy_path = f"faiss_chunks/vectors_{chunk_idx}.npy"
+            chunk_csv_path = f"faiss_chunks/mapping_{chunk_idx}.csv"
+            
+            print(f"\n--- Orchestrator: Spawning Worker for Chunk {chunk_number} on GPU {gpu_id} (Attempt {chunk_task['retries'] + 1}/{MAX_RETRIES}) ---")
+            p = mp.Process(target=process_chunk_worker, args=(chunk_idx, chunk_files, chunk_npy_path, chunk_csv_path, gpu_id))
+            p.start()
+            
+            active_processes.append({
+                'process': p,
+                'chunk_idx': chunk_idx,
+                'gpu_id': gpu_id,
+                'retries': chunk_task['retries'],
+                'npy_path': chunk_npy_path,
+                'csv_path': chunk_csv_path
+            })
+            
+        time.sleep(0.2) # Prevent orchestrator from burning CPU while waiting
 
     print("\n" + "=" * 60)
     print("ALL CHUNKS PROCESSED. ASSEMBLING FINAL FAISS INDEX...")
