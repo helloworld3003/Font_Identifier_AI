@@ -40,22 +40,30 @@ model = None
 index = None
 mapping_df = None
 
+# Set PyTorch to low-memory CPU mode for free-tier hosting
+torch.set_num_threads(1)
+torch.set_grad_enabled(False)
+
 @app.on_event("startup")
-def load_model():
+async def startup_event():
     global device, model, index, mapping_df
-    print("Loading AI Model and FAISS Index...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     if not os.path.exists(MODEL_PATH) or not os.path.exists(INDEX_PATH):
         print("WARNING: Model or FAISS index not found! Ensure they are downloaded.")
         return
 
+    print("Loading Model...")
     model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE)
     model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
     model.to(device)
     model.eval()
     
-    index = faiss.read_index(INDEX_PATH)
+    print("Loading FAISS Index with Memory Mapping (Low RAM Mode)...")
+    # Use MMAP to avoid loading the massive index entirely into active RAM
+    index = faiss.read_index(INDEX_PATH, faiss.IO_FLAG_MMAP)
+    
+    print("Loading Mapping Data...")
     mapping_df = pd.read_csv(MAPPING_PATH)
     print("Initialization Complete!")
 
