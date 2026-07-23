@@ -3,7 +3,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const sidebar = document.getElementById('sidebar');
     const sidebarToggle = document.getElementById('sidebarToggle');
     const imageUpload = document.getElementById('imageUpload');
-    const backendUrlInput = document.getElementById('backendUrl');
     const customTextInput = document.getElementById('customText');
     const startBtn = document.getElementById('startBtn');
     const themeToggle = document.getElementById('themeToggle');
@@ -21,7 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- API Status Polling ---
     async function checkApiStatus() {
-        const url = backendUrlInput.value.trim().replace(/\/$/, "");
+        const url = "https://font-identifier-backend.onrender.com";
         try {
             const pingPromise = fetch(`${url}/`, { method: 'GET' }).catch(() => null);
             const timeoutPromise = new Promise(resolve => setTimeout(() => resolve('timeout'), 5000));
@@ -46,7 +45,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial check and interval
     checkApiStatus();
     setInterval(checkApiStatus, 10000); // Check every 10 seconds
-    backendUrlInput.addEventListener('change', checkApiStatus);
 
     // --- Sidebar Toggle ---
     sidebarToggle.addEventListener('click', () => {
@@ -105,11 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const backendUrl = backendUrlInput.value.replace(/\/$/, ""); // Remove trailing slash
-        if (!backendUrl) {
-            alert('Please enter a backend API URL!');
-            return;
-        }
+        const backendUrl = "https://font-identifier-backend.onrender.com";
 
         startBtn.disabled = true;
         startBtn.textContent = 'Processing...';
