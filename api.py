@@ -5,7 +5,8 @@ import numpy as np
 import cv2
 import io
 import onnxruntime as ort
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+import shutil
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
@@ -56,10 +57,35 @@ async def startup_event():
     print("Initialization Complete!")
 
 def preprocess_image(image_np):
-    image_np = cv2.resize(image_np, (256, 64))
+    # Convert to grayscale first
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-    _, binarized = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    rgb_ready = cv2.cvtColor(binarized, cv2.COLOR_GRAY2RGB)
+    
+    # Binarize using OTSU (THRESH_BINARY keeps background white if it's lighter)
+    # The model was trained on white background and black text.
+    _, binarized = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # Check if we need to invert it (ensure background is white)
+    # If the corners are black (0), it means the background is dark, so we invert.
+    corners = [binarized[0,0], binarized[0,-1], binarized[-1,0], binarized[-1,-1]]
+    if sum(corners) < 255 * 2: # mostly black corners
+        binarized = cv2.bitwise_not(binarized)
+        
+    # Aspect-ratio preserving resize with white padding
+    target_w, target_h = 256, 64
+    h, w = binarized.shape
+    scale = min(target_w / w, target_h / h)
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+    
+    resized = cv2.resize(binarized, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    
+    # Create white canvas and paste
+    canvas = np.full((target_h, target_w), 255, dtype=np.uint8)
+    x = (target_w - new_w) // 2
+    y = (target_h - new_h) // 2
+    canvas[y:y+new_h, x:x+new_w] = resized
+    
+    rgb_ready = cv2.cvtColor(canvas, cv2.COLOR_GRAY2RGB)
     
     mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
     std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -127,8 +153,15 @@ async def predict_font(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def remove_file(path: str):
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
 @app.get("/font/{filename}")
-def get_font(filename: str):
+def get_font(filename: str, background_tasks: BackgroundTasks):
     """
     Serves the actual TTF font file.
     If it's not found locally, it dynamically downloads just that one file from Kaggle!
@@ -150,13 +183,16 @@ def get_font(filename: str):
                 break
                 
     # If not found locally, download it on the fly using Kaggle API
+    is_cached = False
     if not local_path or not os.path.exists(local_path):
         cache_dir = "font_cache"
         os.makedirs(cache_dir, exist_ok=True)
         local_path = os.path.join(cache_dir, filename)
         
         if not os.path.exists(local_path):
-            import subprocess
+            import urllib.parse
+            from kaggle.api.kaggle_api_extended import KaggleApi
+            
             # Look up the exact dataset path in the mapping dataframe
             match = mapping_df[mapping_df['font_path'].str.contains(filename, regex=False)]
             if match.empty:
@@ -166,34 +202,42 @@ def get_font(filename: str):
             # Convert Windows paths to forward slashes for Kaggle API
             kaggle_internal_path = kaggle_internal_path.replace("\\", "/")
             
-            # The Kaggle API expects the path *relative* to the dataset root, 
-            # NOT the absolute /kaggle/input/... path from training.
+            # The Kaggle API expects the path *relative* to the dataset root
             dataset_name = "ttf-files-for-fonts"
             if dataset_name in kaggle_internal_path:
                 kaggle_internal_path = kaggle_internal_path.split(dataset_name + "/")[-1]
             
-            # Use Kaggle API to download JUST this one file!
-            cmd = [
-                "kaggle", "datasets", "download", 
-                "-d", "tapomoysarkar/ttf-files-for-fonts", 
-                "-f", kaggle_internal_path, 
-                "-p", cache_dir, 
-                "--unzip"
-            ]
-            print(f"Dynamically fetching from Kaggle: {' '.join(cmd)}")
-            subprocess.run(cmd)
+            # Use Kaggle Python API to prevent OOM from spawning 10 subprocesses
+            api = KaggleApi()
+            api.authenticate()
+            api.dataset_download_file(
+                dataset="tapomoysarkar/ttf-files-for-fonts",
+                file_name=kaggle_internal_path,
+                path=cache_dir
+            )
             
-            # The Kaggle CLI might download it inside a nested folder structure within cache_dir
-            # We'll just search cache_dir for the filename we want
+            # The Kaggle API URL-encodes filenames with spaces (e.g. My%20Font.ttf)
+            # We must unquote the downloaded files to match our target filename
             for root, _, files in os.walk(cache_dir):
-                if filename in files:
-                    local_path = os.path.join(root, filename)
-                    break
+                for f in files:
+                    if urllib.parse.unquote(f) == filename:
+                        # We found it! Rename it back to its normal name with spaces so it works seamlessly
+                        encoded_path = os.path.join(root, f)
+                        normal_path = os.path.join(root, filename)
+                        if encoded_path != normal_path:
+                            os.rename(encoded_path, normal_path)
+                        local_path = normal_path
+                        break
+        
+        is_cached = True
                     
     if not local_path or not os.path.exists(local_path):
         raise HTTPException(status_code=404, detail="Failed to fetch font file from Kaggle.")
         
-    return FileResponse(local_path, media_type="font/ttf", filename=filename)
+    if is_cached:
+        background_tasks.add_task(remove_file, local_path)
+        
+    return FileResponse(local_path, media_type="application/x-font-truetype", filename=filename)
 
 if __name__ == "__main__":
     import uvicorn
