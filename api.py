@@ -25,6 +25,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+async def root():
+    return {"message": "Font Identifier API Backend is Running!"}
+
 EMBEDDING_SIZE = 512
 MODEL_PATH = "best_model.pth"
 INDEX_PATH = "font_embeddings.index"
