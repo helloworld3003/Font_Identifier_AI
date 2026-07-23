@@ -98,23 +98,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // --- Dynamic Font Loading ---
-    function loadDynamicFont(fontName, fontUrl) {
-        // Create a unique CSS class and @font-face rule
-        const safeFontName = fontName.replace(/[^a-zA-Z0-9]/g, '');
-        const fontFaceRule = `
-            @font-face {
-                font-family: '${safeFontName}';
-                src: url('${fontUrl}') format('truetype');
-            }
-        `;
-        const style = document.createElement('style');
-        style.appendChild(document.createTextNode(fontFaceRule));
-        document.head.appendChild(style);
-        
-        return safeFontName;
-    }
-
     // --- Start Pipeline ---
     startBtn.addEventListener('click', async () => {
         if (!uploadedFile) {
@@ -194,9 +177,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Build the font URL to temporarily download it from the backend
             const fontUrl = `${backendUrl}/font/${encodeURIComponent(match.filename)}`;
-            
-            // Inject @font-face
-            const safeFontFamily = loadDynamicFont(match.font_name, fontUrl);
+            const safeFontFamily = match.font_name.replace(/[^a-zA-Z0-9]/g, '');
 
             // Create Card
             const card = document.createElement('div');
@@ -207,13 +188,26 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="match-rank">#${match.rank} - ${match.font_name}</div>
                     <div class="match-confidence">${match.confidence.toFixed(2)}% Match</div>
                 </div>
+                <div class="font-loading-container" id="loader-${index}">
+                    <span class="spinner-icon">⏳</span> Downloading font...
+                </div>
                 <!-- The style attribute applies the dynamically loaded font -->
-                <div class="match-preview" style="font-family: '${safeFontFamily}', sans-serif;">
+                <div class="match-preview hidden" id="preview-${index}" style="font-family: '${safeFontFamily}', sans-serif;">
                     ${textToPreview}
                 </div>
             `;
             
             matchesContainer.appendChild(card);
+
+            // Dynamically load font and wait for it
+            const fontFace = new FontFace(safeFontFamily, `url('${fontUrl}') format('truetype')`);
+            fontFace.load().then(function(loadedFace) {
+                document.fonts.add(loadedFace);
+                document.getElementById(`loader-${index}`).classList.add('hidden');
+                document.getElementById(`preview-${index}`).classList.remove('hidden');
+            }).catch(function(error) {
+                document.getElementById(`loader-${index}`).innerHTML = "❌ Failed to download font";
+            });
         });
     }
 });

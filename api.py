@@ -128,7 +128,7 @@ async def predict_font(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/font/{filename}")
-async def get_font(filename: str):
+def get_font(filename: str):
     """
     Serves the actual TTF font file.
     If it's not found locally, it dynamically downloads just that one file from Kaggle!
@@ -158,7 +158,7 @@ async def get_font(filename: str):
         if not os.path.exists(local_path):
             import subprocess
             # Look up the exact dataset path in the mapping dataframe
-            match = mapping_df[mapping_df['font_path'].str.contains(filename)]
+            match = mapping_df[mapping_df['font_path'].str.contains(filename, regex=False)]
             if match.empty:
                 raise HTTPException(status_code=404, detail="Font not found in mapping.")
                 

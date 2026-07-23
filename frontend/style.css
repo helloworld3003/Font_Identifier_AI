@@ -224,6 +224,25 @@ pre {
     display: none !important;
 }
 
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.font-loading-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1rem;
+    color: var(--text-muted);
+    padding: 20px;
+}
+
+.spinner-icon {
+    display: inline-block;
+    animation: spin 1s linear infinite;
+}
+
 .results-section h2 {
     font-size: 1.8rem;
     margin-bottom: 1.5rem;
