@@ -28,12 +28,13 @@ simple_model_200726/
 adv_model_200726/
 adv_model_210726/
 kaggle_outputs/
+
 # # PyTorch Models & Weights
 # *.pth
 # best_metric_model.pth
 # poc_metric_model.pth
 # best_model.pth
-
+arcface_model
 # FAISS Databases & CSV Metadata
 *.index
 *.csv

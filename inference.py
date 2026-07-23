@@ -124,7 +124,7 @@ class FontIdentifier:
         self.index = faiss.read_index(INDEX_PATH)
         self.mapping_df = pd.read_csv(MAPPING_PATH)
 
-    def identify_image(self, image_path, top_k=5):
+    def identify_image(self, image_path, top_k=10):
         print(f"\n[INTERACTIVE MODE] Analyzing {image_path}...")
         multi = input("Does this image contain MULTIPLE different fonts? (y/n) [Default: n]: ").strip().lower()
         
@@ -183,8 +183,20 @@ class FontIdentifier:
                     viz_board.paste(resized_crop, (30, y_offset + 60))
                 else:
                     try:
-                        render_font = ImageFont.truetype(font_to_render, 64)
-                        draw_board.text((30, y_offset + 70), custom_text, font=render_font, fill="black")
+                        # 4x Supersampling Anti-Aliasing (SSAA) for razor-sharp font rendering
+                        scale_factor = 4
+                        large_font = ImageFont.truetype(font_to_render, 64 * scale_factor)
+                        
+                        # Create a huge transparent canvas to draw the text at 4x scale
+                        temp_canvas = Image.new("RGBA", (board_w * scale_factor, 110 * scale_factor), (255, 255, 255, 0))
+                        temp_draw = ImageDraw.Draw(temp_canvas)
+                        temp_draw.text((0, 0), custom_text, font=large_font, fill="black")
+                        
+                        # Shrink it down using high-quality Lanczos resampling (this perfectly smooths the edges)
+                        crisp_text_img = temp_canvas.resize((board_w, 110), Image.Resampling.LANCZOS)
+                        
+                        # Paste it onto the main board
+                        viz_board.paste(crisp_text_img, (30, y_offset + 70), crisp_text_img)
                     except Exception:
                         draw_board.text((30, y_offset + 70), "[Font Rendering Failed]", font=default_font, fill="red")
                 draw_board.line([(0, y_offset + row_h - 1), (board_w, y_offset + row_h - 1)], fill="#e5e7eb", width=2)
@@ -221,7 +233,7 @@ class FontIdentifier:
         original_img.save("visual_result_image.png")
         print("\nSaved overall bounding box image to visual_result_image.png")
 
-    def identify_font(self, font_path, top_k=5):
+    def identify_font(self, font_path, top_k=10):
         print(f"Analyzing structure of Font: {Path(font_path).name}")
         
         # 1. Render exactly like the training loop
@@ -260,9 +272,16 @@ class FontIdentifier:
             draw.text((30, y_offset + 20), title, font=default_font, fill="#2563eb" if is_query else "#333333")
             # Rendered Sample
             try:
-                render_font = ImageFont.truetype(font_to_render, 64)
-                # Some fonts have large ascenders/descenders, so we give them plenty of vertical breathing room
-                draw.text((30, y_offset + 70), "Sphinx of black quartz, judge my vow.", font=render_font, fill="black")
+                # 4x Supersampling Anti-Aliasing (SSAA) for razor-sharp font rendering
+                scale_factor = 4
+                large_font = ImageFont.truetype(font_to_render, 64 * scale_factor)
+                
+                temp_canvas = Image.new("RGBA", (board_w * scale_factor, 110 * scale_factor), (255, 255, 255, 0))
+                temp_draw = ImageDraw.Draw(temp_canvas)
+                temp_draw.text((0, 0), "Sphinx of black quartz, judge my vow.", font=large_font, fill="black")
+                
+                crisp_text_img = temp_canvas.resize((board_w, 110), Image.Resampling.LANCZOS)
+                viz_board.paste(crisp_text_img, (30, y_offset + 70), crisp_text_img)
             except Exception:
                 draw.text((30, y_offset + 70), "[Font Rendering Failed]", font=default_font, fill="red")
             # Separator
@@ -315,6 +334,6 @@ if __name__ == "__main__":
         
     app = FontIdentifier()
     if args.image:
-        app.identify_image(args.image)
+        app.identify_image(args.image, top_k=10)
     if args.font:
-        app.identify_font(args.font, top_k=5)
+        app.identify_font(args.font, top_k=10)
