@@ -54,6 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const reader = new FileReader();
             reader.onload = (e) => {
                 queryImagePreview.src = e.target.result;
+                document.getElementById('sidebarImagePreview').style.display = 'block';
             };
             reader.readAsDataURL(file);
             logToTerminal(`Loaded image: ${file.name}`, 'info');

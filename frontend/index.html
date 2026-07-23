@@ -23,6 +23,13 @@
                     </div>
                 </div>
 
+                <div class="input-group" id="sidebarImagePreview" style="display: none;">
+                    <label>Query Image</label>
+                    <div class="image-preview-container" style="min-height: 100px; padding: 0.5rem;">
+                        <img id="queryImagePreview" src="" alt="Query Image">
+                    </div>
+                </div>
+
                 <hr class="divider">
 
                 <div class="input-group">
@@ -73,22 +80,9 @@
 
             <!-- Results Section -->
             <div id="resultsSection" class="results-section hidden">
-                <h2>Identification Results</h2>
-                
-                <div class="results-grid">
-                    <div class="column">
-                        <h3>1. Query Image</h3>
-                        <div class="image-preview-container">
-                            <img id="queryImagePreview" src="" alt="Query Image">
-                        </div>
-                    </div>
-                    
-                    <div class="column">
-                        <h3>2. Top Font Matches</h3>
-                        <div id="matchesContainer" class="matches-container">
-                            <!-- Matches will be injected here via JS -->
-                        </div>
-                    </div>
+                <h2>Top Font Matches</h2>
+                <div id="matchesContainer" class="matches-container">
+                    <!-- Matches will be injected here via JS -->
                 </div>
             </div>
         </main>
