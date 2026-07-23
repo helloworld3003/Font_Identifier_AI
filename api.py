@@ -1,18 +1,15 @@
 import os
-import torch
 import faiss
 import pandas as pd
 import numpy as np
 import cv2
 import io
-import torch.nn.functional as F
+import onnxruntime as ort
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from PIL import Image
-
-from model import ConvNeXtFontEncoder
 
 app = FastAPI(title="Font Identifier API", description="Backend API for Font Identifier Web App")
 
@@ -35,29 +32,20 @@ INDEX_PATH = "font_embeddings.index"
 MAPPING_PATH = "faiss_mapping.csv"
 
 # Global Variables
-device = None
-model = None
+ort_session = None
 index = None
 mapping_df = None
 
-# Set PyTorch to low-memory CPU mode for free-tier hosting
-torch.set_num_threads(1)
-torch.set_grad_enabled(False)
-
 @app.on_event("startup")
 async def startup_event():
-    global device, model, index, mapping_df
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    global ort_session, index, mapping_df
     
-    if not os.path.exists(MODEL_PATH) or not os.path.exists(INDEX_PATH):
-        print("WARNING: Model or FAISS index not found! Ensure they are downloaded.")
+    if not os.path.exists("best_model.onnx") or not os.path.exists(INDEX_PATH):
+        print("WARNING: ONNX Model or FAISS index not found! Ensure they are downloaded.")
         return
 
-    print("Loading Model...")
-    model = ConvNeXtFontEncoder(embedding_dim=EMBEDDING_SIZE)
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
-    model.to(device)
-    model.eval()
+    print("Loading ONNX Model (Ultra-Low RAM Mode)...")
+    ort_session = ort.InferenceSession("best_model.onnx", providers=['CPUExecutionProvider'])
     
     print("Loading FAISS Index with Memory Mapping (Low RAM Mode)...")
     # Use MMAP to avoid loading the massive index entirely into active RAM
@@ -73,11 +61,13 @@ def preprocess_image(image_np):
     _, binarized = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     rgb_ready = cv2.cvtColor(binarized, cv2.COLOR_GRAY2RGB)
     
-    mean = np.array([0.485, 0.456, 0.406])
-    std = np.array([0.229, 0.224, 0.225])
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
     normalized = (rgb_ready / 255.0 - mean) / std
     
-    tensor = torch.tensor(normalized, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
+    # Transpose to (C, H, W) and add batch dimension (1, C, H, W)
+    tensor = np.transpose(normalized, (2, 0, 1))
+    tensor = np.expand_dims(tensor, axis=0).astype(np.float32)
     return tensor
 
 def resolve_local_font_path(kaggle_path):
@@ -95,7 +85,7 @@ def resolve_local_font_path(kaggle_path):
 
 @app.post("/predict")
 async def predict_font(file: UploadFile = File(...)):
-    if model is None or index is None:
+    if ort_session is None or index is None:
         raise HTTPException(status_code=503, detail="Model is not loaded.")
         
     try:
@@ -104,14 +94,18 @@ async def predict_font(file: UploadFile = File(...)):
         image_np = np.array(image)
         
         # Preprocess
-        tensor = preprocess_image(image_np).to(device)
+        tensor = preprocess_image(image_np)
         
-        # Extract features
-        with torch.no_grad():
-            embedding = F.normalize(model(tensor), p=2, dim=1)
+        # Extract features using ONNX
+        outputs = ort_session.run(None, {'input': tensor})
+        embedding = outputs[0]
+        
+        # Normalize the embedding using numpy (L2 normalization)
+        norm = np.linalg.norm(embedding, axis=1, keepdims=True)
+        embedding = embedding / norm
             
         # FAISS search
-        distances, indices = index.search(embedding.cpu().numpy().astype('float32'), 10)
+        distances, indices = index.search(embedding.astype('float32'), 10)
         
         results = []
         for i in range(10):
@@ -171,6 +165,12 @@ async def get_font(filename: str):
             kaggle_internal_path = match.iloc[0]['font_path']
             # Convert Windows paths to forward slashes for Kaggle API
             kaggle_internal_path = kaggle_internal_path.replace("\\", "/")
+            
+            # The Kaggle API expects the path *relative* to the dataset root, 
+            # NOT the absolute /kaggle/input/... path from training.
+            dataset_name = "ttf-files-for-fonts"
+            if dataset_name in kaggle_internal_path:
+                kaggle_internal_path = kaggle_internal_path.split(dataset_name + "/")[-1]
             
             # Use Kaggle API to download JUST this one file!
             cmd = [

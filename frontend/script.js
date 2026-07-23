@@ -15,8 +15,38 @@ document.addEventListener('DOMContentLoaded', () => {
     const resultsSection = document.getElementById('resultsSection');
     const queryImagePreview = document.getElementById('queryImagePreview');
     const matchesContainer = document.getElementById('matchesContainer');
-    
+    const apiStatusElement = document.getElementById('apiStatus');
+
     let uploadedFile = null;
+
+    // --- API Status Polling ---
+    async function checkApiStatus() {
+        const url = backendUrlInput.value.trim().replace(/\/$/, "");
+        try {
+            const pingPromise = fetch(`${url}/`, { method: 'GET' }).catch(() => null);
+            const timeoutPromise = new Promise(resolve => setTimeout(() => resolve('timeout'), 5000));
+            const response = await Promise.race([pingPromise, timeoutPromise]);
+            
+            if (response !== 'timeout' && response && response.ok) {
+                apiStatusElement.innerHTML = '<span style="color: #10b981;">🟢</span> Online & Ready';
+                apiStatusElement.style.borderColor = '#10b981';
+                apiStatusElement.style.color = '#10b981';
+            } else {
+                apiStatusElement.innerHTML = '<span style="color: #ef4444;">🔴</span> Offline or Building...';
+                apiStatusElement.style.borderColor = '#ef4444';
+                apiStatusElement.style.color = '#ef4444';
+            }
+        } catch (e) {
+            apiStatusElement.innerHTML = '<span style="color: #ef4444;">🔴</span> Offline or Building...';
+            apiStatusElement.style.borderColor = '#ef4444';
+            apiStatusElement.style.color = '#ef4444';
+        }
+    }
+
+    // Initial check and interval
+    checkApiStatus();
+    setInterval(checkApiStatus, 10000); // Check every 10 seconds
+    backendUrlInput.addEventListener('change', checkApiStatus);
 
     // --- Sidebar Toggle ---
     sidebarToggle.addEventListener('click', () => {
@@ -113,6 +143,22 @@ document.addEventListener('DOMContentLoaded', () => {
         formData.append('file', uploadedFile);
 
         try {
+            logToTerminal('Pinging backend API...', 'info');
+            
+            // Ping the root endpoint to check if the server is awake
+            const pingPromise = fetch(`${backendUrl}/`, { method: 'GET' }).catch(() => null);
+            
+            // Wait 2 seconds to see if it responds quickly
+            const timeoutPromise = new Promise(resolve => setTimeout(() => resolve('timeout'), 2000));
+            const firstResult = await Promise.race([pingPromise, timeoutPromise]);
+            
+            if (firstResult === 'timeout') {
+                logToTerminal('The free API instance is currently spinning up from sleep...', 'error');
+                logToTerminal('This initial wake-up can take up to 50 seconds. Please do not refresh...', 'info');
+                await pingPromise; // wait for the ping to actually finish
+            }
+            
+            logToTerminal('✅ Backend API is awake and connected!', 'success');
             logToTerminal('Uploading image tensor to PyTorch backend...', 'info');
             
             const response = await fetch(`${backendUrl}/predict`, {
