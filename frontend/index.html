@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Font Identifier AI Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Google Fonts for the UI -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-content">
+                <h2>Configuration</h2>
+                <p class="subtitle">Upload an image containing text to identify its typography.</p>
+                
+                <div class="input-group">
+                    <label for="imageUpload">Image Source</label>
+                    <div class="file-upload">
+                        <input type="file" id="imageUpload" accept=".png, .jpg, .jpeg">
+                    </div>
+                </div>
+
+                <hr class="divider">
+
+                <div class="input-group">
+                    <label for="backendUrl">Backend API URL</label>
+                    <input type="text" id="backendUrl" value="http://localhost:8000" placeholder="e.g. https://your-space.hf.space">
+                    <small>Point this to your hosted FastAPI backend.</small>
+                </div>
+
+                <div class="input-group">
+                    <label for="customText">Preview Text</label>
+                    <input type="text" id="customText" value="Sphinx of black quartz, judge my vow." placeholder="Enter preview text">
+                </div>
+
+                <div class="input-group">
+                    <button id="themeToggle" class="primary-btn" style="width: 100%; background-color: var(--border-color); color: var(--text-color);">Toggle Dark Mode</button>
+                </div>
+            </div>
+
+            <div class="creator-section">
+                <p>Created by <strong>Tapomoy Sarkar</strong></p>
+                <p><a href="https://github.com/helloworld3003" target="_blank">@helloworld3003</a></p>
+            </div>
+            
+            <button id="sidebarToggle" class="sidebar-toggle">◀</button>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header>
+                <h1>AI Font Identifier Dashboard</h1>
+                <p>Upload a cropped image of text, and the ConvNeXt model will search through 185,000+ fonts to find the exact match.</p>
+            </header>
+
+            <div class="action-bar">
+                <button id="startBtn" class="primary-btn">Start Identification Pipeline</button>
+            </div>
+
+            <!-- Terminal Expander -->
+            <div class="expander">
+                <button class="expander-header" id="terminalToggle">
+                    Terminal Execution Logs <span class="expander-icon">▼</span>
+                </button>
+                <div class="expander-content" id="terminalContainer">
+                    <pre><code id="terminalLogs" class="bash">Ready to start pipeline...
+</code></pre>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div id="resultsSection" class="results-section hidden">
+                <h2>Identification Results</h2>
+                
+                <div class="results-grid">
+                    <div class="column">
+                        <h3>1. Query Image</h3>
+                        <div class="image-preview-container">
+                            <img id="queryImagePreview" src="" alt="Query Image">
+                        </div>
+                    </div>
+                    
+                    <div class="column">
+                        <h3>2. Top Font Matches</h3>
+                        <div id="matchesContainer" class="matches-container">
+                            <!-- Matches will be injected here via JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+</html>

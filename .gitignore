@@ -50,3 +50,4 @@ Screenshot*.png
 .idea/
 .DS_Store
 Thumbs.db
+deployment_guide.md
