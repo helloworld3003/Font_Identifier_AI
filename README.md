@@ -78,7 +78,10 @@ A full frontend web application allows users to upload screenshots, draw boundin
 
 **🌐 [Try the Live Website (Netlify)](https://font-identifier-ai.netlify.app/)**
 
-- **[Click to View Dashboard Video Demo (MP4)](Documents/Font%20Identifier%20AI%20Dashboard.mp4)**
+
+https://github.com/user-attachments/assets/f318a7c9-dfcb-41c5-9556-001097a7046a
+
+
 
 <div align="center">
   <img src="Documents/dashboard_page_1.png" alt="Dashboard Page 1" width="80%">
