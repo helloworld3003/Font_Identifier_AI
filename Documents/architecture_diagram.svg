@@ -1,57 +1,159 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600" width="100%" height="100%">
-  <style>
-    .box { fill: #1e1e2f; stroke: #5c3ee8; stroke-width: 3; rx: 10; ry: 10; }
-    .box-title { font-family: Arial, sans-serif; font-size: 20px; font-weight: bold; fill: #ffffff; text-anchor: middle; }
-    .box-desc { font-family: Arial, sans-serif; font-size: 14px; fill: #b0b0b0; text-anchor: middle; }
-    .arrow { stroke: #00ceaa; stroke-width: 3; fill: none; }
-    .arrow-head { fill: #00ceaa; }
-    .group-box { fill: none; stroke: #3a3a5c; stroke-width: 2; stroke-dasharray: 5,5; rx: 15; ry: 15; }
-    .group-title { font-family: Arial, sans-serif; font-size: 18px; font-weight: bold; fill: #a0a0ff; }
-  </style>
-  <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" class="arrow-head"/>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 800" width="100%" height="100%">
+<defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7f8c8d" />
     </marker>
-  </defs>
-  <rect x="0" y="0" width="1000" height="600" fill="#0d1117"/>
-  
-  <rect x="50" y="100" width="250" height="400" class="group-box"/>
-  <text x="70" y="130" class="group-title">Frontend Dashboard</text>
-  
-  <rect x="350" y="100" width="300" height="400" class="group-box"/>
-  <text x="370" y="130" class="group-title">FastAPI Backend</text>
-  
-  <rect x="700" y="100" width="250" height="400" class="group-box"/>
-  <text x="720" y="130" class="group-title">AI &amp; FAISS DB</text>
+    <filter id="drop-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="3" dy="5" stdDeviation="4" flood-color="#000000" flood-opacity="0.15" />
+    </filter>
+</defs>
+<rect width="100%" height="100%" fill="#ffffff" />
 
-  <rect x="75" y="250" width="200" height="80" class="box"/>
-  <text x="175" y="285" class="box-title">Web UI</text>
-  <text x="175" y="305" class="box-desc">React / HTML5</text>
+<!-- Group 1: Frontend & Pre-Processing -->
+<g>
+    <rect x="30" y="40" width="300" height="700" fill="#f8f9fa" rx="10" stroke="#bdc3c7" stroke-width="2" stroke-dasharray="8,4" />
+    <text x="180" y="70" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="bold" fill="#2c3e50" text-anchor="middle">1. Spatial Pre-Processing</text>
+</g>
 
-  <rect x="400" y="150" width="200" height="70" class="box"/>
-  <text x="500" y="185" class="box-title">REST API</text>
-  <text x="500" y="205" class="box-desc">FastAPI Endpoints</text>
+<!-- Group 2: Neural Architecture -->
+<g>
+    <rect x="360" y="40" width="550" height="700" fill="#eef2f5" rx="10" stroke="#bdc3c7" stroke-width="2" stroke-dasharray="8,4" />
+    <text x="635" y="70" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="bold" fill="#2c3e50" text-anchor="middle">2. Neural Network (ConvNeXt-Tiny)</text>
+</g>
 
-  <rect x="400" y="265" width="200" height="70" class="box"/>
-  <text x="500" y="300" class="box-title">Image Processing</text>
-  <text x="500" y="320" class="box-desc">OpenCV OTSU</text>
+<!-- Group 3: FAISS Vector Search -->
+<g>
+    <rect x="940" y="40" width="410" height="700" fill="#f4f9f4" rx="10" stroke="#bdc3c7" stroke-width="2" stroke-dasharray="8,4" />
+    <text x="1145" y="70" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="bold" fill="#2c3e50" text-anchor="middle">3. FAISS Metric Engine</text>
+</g>
 
-  <rect x="400" y="380" width="200" height="70" class="box"/>
-  <text x="500" y="415" class="box-title">Neural Network</text>
-  <text x="500" y="435" class="box-desc">ConvNeXt-Tiny ONNX</text>
+<!-- Data elements in Group 1 -->
+<!-- Raw Image -->
+<g transform="translate(100, 120)">
+    <polygon points="0,0 80,0 100,-20 20,-20" fill="#dcedc1" stroke="#2c3e50" stroke-width="1.5" />
+    <polygon points="80,0 100,-20 100,60 80,80" fill="#88d8b0" stroke="#2c3e50" stroke-width="1.5" />
+    <rect x="0" y="0" width="80" height="80" fill="#a8e6cf" stroke="#2c3e50" stroke-width="1.5" />
+    <text x="40" y="35" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1a252f" text-anchor="middle">Raw Crop</text>
+    <text x="40" y="55" font-family="Segoe UI, Arial, sans-serif" font-size="12" fill="#34495e" text-anchor="middle">RGB Image</text>
+</g>
+<line x1="150" y1="220" x2="150" y2="280" stroke="#7f8c8d" stroke-width="2" marker-end="url(#arrowhead)" />
+<text x="160" y="255" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-style="italic" fill="#7f8c8d" text-anchor="start">cv2.adaptiveThreshold</text>
 
-  <rect x="725" y="200" width="200" height="90" class="box"/>
-  <text x="825" y="240" class="box-title">Vector DB</text>
-  <text x="825" y="260" class="box-desc">FAISS MMAP Index</text>
+<!-- Binarized Image -->
+<g transform="translate(100, 300)">
+    <polygon points="0,0 80,0 100,-20 20,-20" fill="#e0e0e0" stroke="#2c3e50" stroke-width="1.5" />
+    <polygon points="80,0 100,-20 100,60 80,80" fill="#bdbdbd" stroke="#2c3e50" stroke-width="1.5" />
+    <rect x="0" y="0" width="80" height="80" fill="#ffffff" stroke="#2c3e50" stroke-width="1.5" />
+    <text x="40" y="35" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1a252f" text-anchor="middle">Binarized</text>
+    <text x="40" y="55" font-family="Segoe UI, Arial, sans-serif" font-size="12" fill="#34495e" text-anchor="middle">1-Channel</text>
+</g>
+<line x1="150" y1="400" x2="150" y2="460" stroke="#7f8c8d" stroke-width="2" marker-end="url(#arrowhead)" />
+<text x="160" y="435" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-style="italic" fill="#7f8c8d" text-anchor="start">Resize &amp; Pad (256x64)</text>
 
-  <rect x="725" y="340" width="200" height="80" class="box"/>
-  <text x="825" y="375" class="box-title">Dataset Map</text>
-  <text x="825" y="395" class="box-desc">Kaggle CSV Link</text>
+<!-- Tensor Ready -->
+<g transform="translate(50, 480)">
+    <polygon points="0,0 180,0 200,-20 20,-20" fill="#ffc0cb" stroke="#2c3e50" stroke-width="1.5" />
+    <polygon points="180,0 200,-20 200,40 180,60" fill="#c08497" stroke="#2c3e50" stroke-width="1.5" />
+    <rect x="0" y="0" width="180" height="60" fill="#d4a5a5" stroke="#2c3e50" stroke-width="1.5" />
+    <text x="90" y="25" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="bold" fill="#1a252f" text-anchor="middle">Normalized Tensor</text>
+    <text x="90" y="45" font-family="Segoe UI, Arial, sans-serif" font-size="12" fill="#34495e" text-anchor="middle">(1 x 3 x 64 x 256)</text>
+</g>
 
-  <line x1="275" y1="290" x2="385" y2="185" class="arrow" marker-end="url(#arrow)"/>
-  <line x1="500" y1="220" x2="500" y2="250" class="arrow" marker-end="url(#arrow)"/>
-  <line x1="500" y1="335" x2="500" y2="365" class="arrow" marker-end="url(#arrow)"/>
-  <line x1="600" y1="415" x2="710" y2="245" class="arrow" marker-end="url(#arrow)"/>
-  <line x1="825" y1="290" x2="825" y2="325" class="arrow" marker-end="url(#arrow)"/>
-  <line x1="725" y1="380" x2="600" y2="200" class="arrow" marker-end="url(#arrow)"/>
+<!-- Arrow to Group 2 -->
+<line x1="250" y1="510" x2="380" y2="510" stroke="#7f8c8d" stroke-width="2" marker-end="url(#arrowhead)" />
+<text x="315" y="500" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-style="italic" fill="#7f8c8d" text-anchor="middle">ONNX Runtime</text>
+
+<!-- Group 2: Neural Net -->
+<g transform="translate(420, 120)">
+    <!-- Layer blocks for ConvNeXt -->
+    <!-- Stem -->
+    <polygon points="0,300 40,300 50,290 10,290" fill="#5dade2" stroke="#2980b9" stroke-width="1.5" />
+    <polygon points="40,300 50,290 50,470 40,480" fill="#2874a6" stroke="#2980b9" stroke-width="1.5" />
+    <rect x="0" y="300" width="40" height="180" fill="#3498db" stroke="#2980b9" stroke-width="1.5" />
+    
+    <!-- Stage 1-2 -->
+    <polygon points="70,250 130,250 140,240 80,240" fill="#af7ac5" stroke="#8e44ad" stroke-width="1.5" />
+    <polygon points="130,250 140,240 140,520 130,530" fill="#76448a" stroke="#8e44ad" stroke-width="1.5" />
+    <rect x="70" y="250" width="60" height="280" fill="#9b59b6" stroke="#8e44ad" stroke-width="1.5" />
+    
+    <!-- Stage 3 -->
+    <polygon points="160,200 240,200 250,190 170,190" fill="#f1948a" stroke="#c0392b" stroke-width="1.5" />
+    <polygon points="240,200 250,190 250,570 240,580" fill="#b03a2e" stroke="#c0392b" stroke-width="1.5" />
+    <rect x="160" y="200" width="80" height="380" fill="#e74c3c" stroke="#c0392b" stroke-width="1.5" />
+    
+    <!-- Stage 4 -->
+    <polygon points="270,300 330,300 340,290 280,290" fill="#f7dc6f" stroke="#f39c12" stroke-width="1.5" />
+    <polygon points="330,300 340,290 340,470 330,480" fill="#b9770e" stroke="#f39c12" stroke-width="1.5" />
+    <rect x="270" y="300" width="60" height="180" fill="#f1c40f" stroke="#f39c12" stroke-width="1.5" />
+    
+    <!-- Layer Labels -->
+    <text x="20" y="290" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="bold" fill="#34495e" text-anchor="middle" transform="rotate(-90 20,290)">Stem</text>
+    <text x="100" y="240" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="bold" fill="#34495e" text-anchor="middle" transform="rotate(-90 100,240)">Stage 1-2</text>
+    <text x="200" y="190" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="bold" fill="#34495e" text-anchor="middle" transform="rotate(-90 200,190)">Stage 3</text>
+    <text x="300" y="290" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="bold" fill="#34495e" text-anchor="middle" transform="rotate(-90 300,290)">Stage 4</text>
+    
+    <line x1="55" y1="390" x2="65" y2="390" stroke="#7f8c8d" stroke-width="2" marker-end="url(#arrowhead)" />
+    <line x1="145" y1="390" x2="155" y2="390" stroke="#7f8c8d" stroke-width="2" marker-end="url(#arrowhead)" />
+    <line x1="255" y1="390" x2="265" y2="390" stroke="#7f8c8d" stroke-width="2" marker-end="url(#arrowhead)" />
+    
+    <line x1="345" y1="390" x2="380" y2="390" stroke="#7f8c8d" stroke-width="2" marker-end="url(#arrowhead)" />
+    <text x="362" y="380" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-style="italic" fill="#7f8c8d" text-anchor="middle">Pool</text>
+    
+    <!-- 512 Vector -->
+    <polygon points="390,100 420,100 430,90 400,90" fill="#58d68d" stroke="#27ae60" stroke-width="1.5" />
+    <polygon points="420,100 430,90 430,670 420,680" fill="#1e8449" stroke="#27ae60" stroke-width="1.5" />
+    <rect x="390" y="100" width="30" height="580" fill="#2ecc71" stroke="#27ae60" stroke-width="1.5" />
+    
+    <text x="450" y="390" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="bold" fill="#1a252f" text-anchor="start">512-Dim</text>
+    <text x="450" y="415" font-family="Segoe UI, Arial, sans-serif" font-size="14" fill="#34495e" text-anchor="start">L2 Normalized</text>
+    <text x="450" y="435" font-family="Segoe UI, Arial, sans-serif" font-size="14" fill="#34495e" text-anchor="start">Embeddings</text>
+    
+    <!-- ArcFace note -->
+    <g transform="translate(140, 40)">
+        <rect x="0" y="0" width="180" height="70" fill="#ffeb3b" stroke="#f39c12" stroke-width="1.5" rx="5" filter="url(#drop-shadow)"/>
+        <text x="90" y="30" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="bold" fill="#d35400" text-anchor="middle">ArcFace Penalty</text>
+        <text x="90" y="55" font-family="Segoe UI, Arial, sans-serif" font-size="13" fill="#d35400" text-anchor="middle">Applied during training</text>
+        <line x1="90" y1="70" x2="90" y2="120" stroke="#f39c12" stroke-width="2" stroke-dasharray="4,4" />
+    </g>
+</g>
+
+<!-- Arrow to FAISS -->
+<line x1="880" y1="510" x2="980" y2="510" stroke="#7f8c8d" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="930" y="495" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="bold" font-style="italic" fill="#7f8c8d" text-anchor="middle">Query Vector</text>
+
+<!-- Group 3: FAISS -->
+<g transform="translate(1000, 120)">
+    <!-- Massive DB -->
+    <polygon points="0,50 180,50 220,10 40,10" fill="#bdc3c7" stroke="#2c3e50" stroke-width="1.5" />
+    <polygon points="180,50 220,10 220,530 180,570" fill="#7f8c8d" stroke="#2c3e50" stroke-width="1.5" />
+    <rect x="0" y="50" width="180" height="520" fill="#ecf0f1" stroke="#2c3e50" stroke-width="1.5" />
+    
+    <!-- Stacked blocks to represent vectors -->
+    <rect x="10" y="70" width="160" height="20" fill="#3498db" />
+    <rect x="10" y="100" width="160" height="20" fill="#e74c3c" />
+    <rect x="10" y="130" width="160" height="20" fill="#2ecc71" />
+    <rect x="10" y="160" width="160" height="20" fill="#9b59b6" />
+    <circle cx="90" cy="220" r="4" fill="#34495e" />
+    <circle cx="90" cy="240" r="4" fill="#34495e" />
+    <circle cx="90" cy="260" r="4" fill="#34495e" />
+    <rect x="10" y="320" width="160" height="20" fill="#f1c40f" />
+    <rect x="10" y="350" width="160" height="20" fill="#e67e22" />
+    
+    <text x="90" y="440" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="bold" fill="#2c3e50" text-anchor="middle">FAISS MMAP</text>
+    <text x="90" y="475" font-family="Segoe UI, Arial, sans-serif" font-size="16" fill="#34495e" text-anchor="middle">185,700 Embeddings</text>
+    <text x="90" y="505" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-style="italic" fill="#7f8c8d" text-anchor="middle">(IndexFlatIP)</text>
+    
+    <!-- DB match logic -->
+    <line x1="-20" y1="390" x2="30" y2="390" stroke="#e74c3c" stroke-width="3" marker-end="url(#arrowhead)" />
+    
+    <rect x="250" y="250" width="130" height="150" fill="#ffffff" stroke="#2980b9" stroke-width="2" rx="5" filter="url(#drop-shadow)"/>
+    <text x="315" y="290" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="bold" fill="#2980b9" text-anchor="middle">Top-K Match</text>
+    <text x="315" y="325" font-family="Segoe UI, Arial, sans-serif" font-size="14" fill="#34495e" text-anchor="middle">Cosine Sim</text>
+    <text x="315" y="345" font-family="Segoe UI, Arial, sans-serif" font-size="14" fill="#34495e" text-anchor="middle">Map to TTF</text>
+    <text x="315" y="380" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="bold" fill="#27ae60" text-anchor="middle">Output JSON</text>
+    
+    <line x1="220" y1="325" x2="240" y2="325" stroke="#7f8c8d" stroke-width="2" marker-end="url(#arrowhead)" />
+</g>
+
 </svg>
