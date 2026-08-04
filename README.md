@@ -8,8 +8,10 @@
 [![Kaggle](https://img.shields.io/badge/Kaggle-035a7d?style=for-the-badge&logo=kaggle&logoColor=white)](https://www.kaggle.com/datasets/tapomoysarkar/ttf-files-for-fonts)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
 [![ONNX](https://img.shields.io/badge/ONNX-005CED?style=for-the-badge&logo=onnx&logoColor=white)](https://onnx.ai/)
+[![Website](https://img.shields.io/badge/Website-Netlify-00C7B7?style=for-the-badge&logo=netlify)](https://font-identifier-ai.netlify.app/)
 
 **Creator:** Tapomoy Sarkar
+**Helper:** Srijit Mondal
 
 > An ultra-scale Computer Vision pipeline designed to identify the exact typography used in any raw image or screenshot from a library of **185,700+ fonts**.
 
@@ -34,7 +36,7 @@ Our inference pipeline isn't just a raw neural network. We inject an OpenCV adap
 ## 🏛️ Architecture & Flowchart
 
 <div align="center">
-  <img src="Documentation/architecture_diagram.png" alt="Architecture Diagram" width="80%">
+  <img src="Documents/architecture_diagram.svg" alt="Architecture Diagram" width="80%">
 </div>
 
 ```mermaid
@@ -74,8 +76,15 @@ Our solution provides a highly interactive and intuitive Web Dashboard that seam
 ### Interactive Dashboard
 A full frontend web application allows users to upload screenshots, draw bounding boxes around text, and instantaneously fetch typographic results. 
 
+**🌐 [Try the Live Website (Netlify)](https://font-identifier-ai.netlify.app/)**
+
 - **[Click to View Dashboard Video Demo (MP4)](Documents/Font%20Identifier%20AI%20Dashboard.mp4)**
-- **[View Dashboard Architecture / Flow (PDF)](Documents/Font%20Identifier%20AI%20Dashboard.pdf)**
+
+<div align="center">
+  <img src="Documents/dashboard_page_1.png" alt="Dashboard Page 1" width="80%">
+  <br><br>
+  <img src="Documents/dashboard_page_2.png" alt="Dashboard Page 2" width="80%">
+</div>
 
 ### High-Performance Backend
 The backend utilizes FastAPI and is capable of ingesting raw images and performing ultra-fast vector retrieval on local edge devices.

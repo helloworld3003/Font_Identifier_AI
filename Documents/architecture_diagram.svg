@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600" width="100%" height="100%">
+  <style>
+    .box { fill: #1e1e2f; stroke: #5c3ee8; stroke-width: 3; rx: 10; ry: 10; }
+    .box-title { font-family: Arial, sans-serif; font-size: 20px; font-weight: bold; fill: #ffffff; text-anchor: middle; }
+    .box-desc { font-family: Arial, sans-serif; font-size: 14px; fill: #b0b0b0; text-anchor: middle; }
+    .arrow { stroke: #00ceaa; stroke-width: 3; fill: none; }
+    .arrow-head { fill: #00ceaa; }
+    .group-box { fill: none; stroke: #3a3a5c; stroke-width: 2; stroke-dasharray: 5,5; rx: 15; ry: 15; }
+    .group-title { font-family: Arial, sans-serif; font-size: 18px; font-weight: bold; fill: #a0a0ff; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" class="arrow-head"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1000" height="600" fill="#0d1117"/>
+  
+  <rect x="50" y="100" width="250" height="400" class="group-box"/>
+  <text x="70" y="130" class="group-title">Frontend Dashboard</text>
+  
+  <rect x="350" y="100" width="300" height="400" class="group-box"/>
+  <text x="370" y="130" class="group-title">FastAPI Backend</text>
+  
+  <rect x="700" y="100" width="250" height="400" class="group-box"/>
+  <text x="720" y="130" class="group-title">AI &amp; FAISS DB</text>
+
+  <rect x="75" y="250" width="200" height="80" class="box"/>
+  <text x="175" y="285" class="box-title">Web UI</text>
+  <text x="175" y="305" class="box-desc">React / HTML5</text>
+
+  <rect x="400" y="150" width="200" height="70" class="box"/>
+  <text x="500" y="185" class="box-title">REST API</text>
+  <text x="500" y="205" class="box-desc">FastAPI Endpoints</text>
+
+  <rect x="400" y="265" width="200" height="70" class="box"/>
+  <text x="500" y="300" class="box-title">Image Processing</text>
+  <text x="500" y="320" class="box-desc">OpenCV OTSU</text>
+
+  <rect x="400" y="380" width="200" height="70" class="box"/>
+  <text x="500" y="415" class="box-title">Neural Network</text>
+  <text x="500" y="435" class="box-desc">ConvNeXt-Tiny ONNX</text>
+
+  <rect x="725" y="200" width="200" height="90" class="box"/>
+  <text x="825" y="240" class="box-title">Vector DB</text>
+  <text x="825" y="260" class="box-desc">FAISS MMAP Index</text>
+
+  <rect x="725" y="340" width="200" height="80" class="box"/>
+  <text x="825" y="375" class="box-title">Dataset Map</text>
+  <text x="825" y="395" class="box-desc">Kaggle CSV Link</text>
+
+  <line x1="275" y1="290" x2="385" y2="185" class="arrow" marker-end="url(#arrow)"/>
+  <line x1="500" y1="220" x2="500" y2="250" class="arrow" marker-end="url(#arrow)"/>
+  <line x1="500" y1="335" x2="500" y2="365" class="arrow" marker-end="url(#arrow)"/>
+  <line x1="600" y1="415" x2="710" y2="245" class="arrow" marker-end="url(#arrow)"/>
+  <line x1="825" y1="290" x2="825" y2="325" class="arrow" marker-end="url(#arrow)"/>
+  <line x1="725" y1="380" x2="600" y2="200" class="arrow" marker-end="url(#arrow)"/>
+</svg>
