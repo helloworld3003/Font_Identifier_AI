@@ -1,12 +1,88 @@
+<div align="center">
+  
 # 🔤 Font Identifier AI
+
+### An Ultra-Scale Computer Vision Pipeline for Typography Recognition
 
 [![PyTorch](https://img.shields.io/badge/PyTorch-%23EE4C2C.svg?style=for-the-badge&logo=PyTorch&logoColor=white)](https://pytorch.org/)
 [![Kaggle](https://img.shields.io/badge/Kaggle-035a7d?style=for-the-badge&logo=kaggle&logoColor=white)](https://www.kaggle.com/datasets/tapomoysarkar/ttf-files-for-fonts)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
+[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
+[![ONNX](https://img.shields.io/badge/ONNX-005CED?style=for-the-badge&logo=onnx&logoColor=white)](https://onnx.ai/)
+
+**Creator:** Tapomoy Sarkar
 
 > An ultra-scale Computer Vision pipeline designed to identify the exact typography used in any raw image or screenshot from a library of **185,700+ fonts**.
 
-Built using **Deep Metric Learning**, the state-of-the-art **ConvNeXt-Tiny** backbone, and **FAISS** (Facebook AI Similarity Search), this architecture extracts 256-dimensional embeddings from fonts and places them onto a unit hypersphere. By leveraging Dynamic RAM Rendering, Static Supervised Contrastive Loss (for TPUs), and Adaptive Inference Binarization, it delivers pristine Train/Test symmetry and absolute gold-standard accuracy.
+</div>
+
+---
+
+## 🚀 The Problem & Our USP
+
+Standard font identification tools rely on OCR or simple heuristics that fail on custom or noisy images. They often require the entire font file to be loaded into memory simultaneously, or have a very limited database of generic fonts.
+
+**Our Difference:** We implemented **Deep Metric Learning**, the state-of-the-art **ConvNeXt-Tiny** backbone, and the **ArcFace (Additive Angular Margin)** Penalty to mathematically force the AI to distinguish between highly similar fonts (e.g., Arial vs. Helvetica). We combined this with a highly optimized backend server that uses **FAISS Memory Mapping** to search a vast embedding space in milliseconds without OOM crashes, making it fully deployable on low-RAM cloud environments.
+
+### 1. Dynamic RAM Rendering
+Because generating static images for 185,000+ fonts creates a severe I/O bottleneck and disk failure risk, this pipeline relies entirely on **Dynamic RAM Rendering**. We load TTFs directly into RAM and use `Pillow` to draw alphanumeric strings on the fly during training.
+
+### 2. Multi-Stage Inference Engine
+Our inference pipeline isn't just a raw neural network. We inject an OpenCV adaptive thresholding step to cleanly binarize real-world crops *before* passing them to the AI, ensuring pristine Train/Test symmetry.
+
+---
+
+## 🏛️ Architecture & Flowchart
+
+<div align="center">
+  <img src="Documentation/architecture_diagram.png" alt="Architecture Diagram" width="80%">
+</div>
+
+```mermaid
+flowchart TB
+    subgraph Frontend_Dashboard [Frontend Online Dashboard]
+        direction LR
+        UI[Web UI Interface] -->|Upload Image & Crop| API_Call(FastAPI REST Call)
+        API_Call --> |JSON Response| Display[Visual Output rendering]
+    end
+    
+    subgraph Backend_Server [Backend FastAPI Server]
+        direction TB
+        Recv[Receive Image Array] --> Preprocess[OpenCV Adaptive Binarization]
+        Preprocess --> Resize[Aspect-Ratio Preserving Resize]
+        Resize --> ONNX[ONNX Runtime: ConvNeXt-Tiny]
+        ONNX --> |512D Vector| L2[L2 Normalization]
+    end
+    
+    subgraph AI_Engine [AI & Vector Search]
+        direction TB
+        FAISS[(FAISS IndexFlatIP \nMemory Mapped)] 
+        L2 --> |Similarity Search| FAISS
+        FAISS --> Top10[Return Top 10 Matches]
+        Top10 --> Metadata[Map to Kaggle TTF]
+    end
+
+    API_Call --> Recv
+    Metadata --> Display
+```
+
+---
+
+## 🖥️ Online Dashboard & Backend Server
+
+Our solution provides a highly interactive and intuitive Web Dashboard that seamlessly connects to our FastAPI backend. 
+
+### Interactive Dashboard
+A full frontend web application allows users to upload screenshots, draw bounding boxes around text, and instantaneously fetch typographic results. 
+
+- **[Click to View Dashboard Video Demo (MP4)](Documents/Font%20Identifier%20AI%20Dashboard.mp4)**
+- **[View Dashboard Architecture / Flow (PDF)](Documents/Font%20Identifier%20AI%20Dashboard.pdf)**
+
+### High-Performance Backend
+The backend utilizes FastAPI and is capable of ingesting raw images and performing ultra-fast vector retrieval on local edge devices.
+
+<div align="center">
+  <img src="Documents/Backend_server.png" alt="Backend Server Output" width="80%">
+</div>
 
 ---
 
@@ -21,76 +97,22 @@ This model is trained on a massive, combined dataset of approximately **185,700 
 
 ---
 
-## 🏗️ System Architecture
-
-Because generating static images for 185,000+ fonts creates a severe I/O bottleneck and disk failure risk, this pipeline entirely relies on **Dynamic RAM Rendering**.
-
-### 🔹 Phase 1: Data Sanitization (`clean_dump.py`)
-Cleans the raw font dump before training.
-- Uses `fonttools` to safely parse binary headers and drops corrupt or 0-byte `.ttf` files.
-- Ensures every font contains the standard English/Numeric glyphs (A-Z, 0-9).
-- Deduplicates the dataset via MD5 hashing to prevent margin collapse during metric learning.
-
-### 🔹 Phase 2: Dynamic Training Pipelines
-Two specialized training scripts exist depending on your hardware:
-
-#### GPU Training (`train_virtual_epochs.py`)
-Optimized for Nvidia GPUs (e.g., Kaggle 2x T4).
-- **Dynamic DataLoader:** Loads TTFs directly into RAM and uses `Pillow` to draw alphanumeric strings on the fly.
-- **Train/Test Symmetry:** Augments data heavily using `Albumentations` (Perspective, Rotation, Blur).
-- **Extreme Speedhacks:** Uses `cudnn.benchmark = True`, non-blocking asynchronous memory transfers, and maxed-out batch sizes (1024) to peg GPUs at 100% utilization.
-
-#### TPU Training (`train_tpu_8core.py`)
-Optimized for Google Cloud TPU v3-8 VMs.
-- **Static XLA Loss:** Replaces dynamic boolean masking with a custom `StaticSupConLoss` (Supervised Contrastive Loss) to eradicate XLA graph recompilation memory leaks.
-- **IPC Bypass:** Implements `mp.set_sharing_strategy('file_system')` to completely bypass Kaggle's deadly 64MB `/dev/shm` Docker limits, allowing high-speed multiprocessing.
-
-### 🔹 Phase 3: Database Indexing (`build_index.py`)
-Builds the ultra-fast FAISS memory index.
-- Passes 5 canonical strings (e.g., `"AaBbCc"`, `"xyz123"`) through the trained ConvNeXt weights.
-- Averages the 5 embeddings into a stable, pristine 256D vector.
-- Indexes all representations into a highly optimized binary `faiss.IndexFlatIP` tree.
-
-### 🔹 Phase 4: Inference Engine (`inference.py`)
-The production evaluation tool.
-- Accepts a real-world image and a list of bounding boxes (`xmin,ymin,xmax,ymax`).
-- Injects an OpenCV `adaptiveThreshold` step to cleanly binarize the crop *before* passing it to the neural network.
-- Queries FAISS to return the Top-1 closest typographic match in milliseconds.
-- Features a visual output that draws red bounding boxes and solid label tabs displaying the predicted Font Name and Confidence percentage (`visual_result.png`).
-
----
-
-## 🚀 Challenges & Technical Breakthroughs
-
-Building an ultra-scale font identifier locally and on cloud infrastructure posed immense technical hurdles. Here is how we solved the core challenges:
+## 🏆 Our Accomplishments
 
 ### 1. The 185,000-File Dataset Bottleneck (Kaggle Integration)
-**The Problem:** Extracting, managing, and training on 185,000+ `.ttf` files locally caused catastrophic OS-level file handle limits and extreme I/O slowness. 
-**The Solution:** We zipped the raw fonts, pushed them to Kaggle Datasets via the Kaggle API, and wrote a Kaggle-compatible metadata script. The training script now automatically auto-detects Kaggle mounting paths (`/kaggle/input/...`) and directly accesses the raw files on high-speed cloud NVMe storage.
+We conquered the massive I/O bottleneck of dealing with 185,000 individual TTF files by bypassing local storage limits. We zip the raw fonts, mount them via Kaggle Datasets on high-speed NVMe storage, and dynamically stream the data.
 
-### 2. GPU Slowness & The Shift to TPUs
-**The Problem:** Training a deep metric learning model on 69,000+ active font classes locally on a standard Nvidia GPU would have taken months to reach convergence.
-**The Solution:** We migrated the architecture to Google Cloud TPUs (`train_tpu_8core.py`). By utilizing PyTorch XLA `xmp.spawn` and distributing the data loader perfectly across 8 TPU cores, we unlocked massive multiprocessing scale.
+### 2. Multi-Processing FAISS Engine & Memory Management
+We completely eliminated OOM crashes during inference and index building by introducing Memory Mapped (MMAP) FAISS indices and a multi-process orchestrator. The AI smoothly processes and searches millions of parameters in an 8GB VRAM envelope.
 
-### 3. Memory Leakage During Training (OOM Crashes)
-**The Problem:** The training script would randomly spike to 300GB RAM usage and crash the Kaggle kernel. This was caused by two massive hidden bugs:
-1. **"Font Metric Bombs":** Certain corrupted fonts had wildly incorrect internal glyph dimensions, forcing the `Pillow` rasterizer to allocate colossal (e.g., 50,000 x 50,000 pixel) canvases in RAM, instantly causing OOM.
-2. **XLA Recompilation:** Standard PyTorch metric learning libraries use dynamic boolean indexing to extract positive/negative pairs. This forced the PyTorch XLA C++ compiler to completely rebuild the TPU graph *every single batch*, causing catastrophic memory leaks.
-**The Solution:** We implemented strict max-dimension clamping (`<= 5000px`) and `try/except` bounds checking in the rasterizer. For the TPU leak, we completely abandoned dynamic libraries and wrote a custom strictly-static Supervised Contrastive Loss that uses pure static matrix multiplication, resulting in exactly *1 compile step* and zero leaks forever.
-
-### 4. Memory Leakage During Index Building
-**The Problem:** Running `build_index.py` to embed 69,000 fonts sequentially caused PyTorch and CUDA to silently leak memory over thousands of iterations, eventually causing the system to deadlock and crash before completion.
-**The Solution:** We architected a Multi-Processed Orchestrator. The main script batches the fonts into chunks of 1000 and spawns a completely isolated child process to embed them. When the chunk is done, the child process is terminated, instantly forcing the OS to reclaim 100% of the leaked RAM before the next chunk begins.
-
-### 5. Inability to Distinguish Extremely Similar Fonts
-**The Problem:** Standard Supervised Contrastive (SupCon) loss proved "too easy" for the AI. The model plateaued around a loss of 1.15, learning superficial global textures but completely failing to distinguish between highly similar fonts (like Arial vs Helvetica).
-**The Solution:** We completely overhauled the loss function to implement the state-of-the-art **ArcFace (Additive Angular Margin)** Penalty. By forcing a brutal, strict geometric 28-degree margin between every font cluster, the AI was mathematically tortured into learning incredibly deep, highly discriminative stroke structures. This pushed the model's accuracy through the roof.
+### 3. Static XLA Loss for Google Cloud TPUs
+Standard PyTorch metric learning libraries use dynamic boolean indexing which causes memory leaks on TPUs. We abandoned dynamic libraries and wrote a custom strictly-static **Supervised Contrastive Loss**. It uses pure static matrix multiplication, resulting in exactly 1 compile step and zero leaks forever on Google Cloud TPU v3-8 VMs.
 
 ---
 
 ## 🛠️ Requirements & Setup
 
-You will need a GPU with CUDA support or a Google TPU for production training. This architecture is heavily optimized to fit inside an 8GB VRAM envelope (or a Kaggle TPU).
+You will need a GPU with CUDA support or a Google TPU for production training. This architecture is heavily optimized to fit inside an 8GB VRAM envelope.
 
 ```bash
 # Create a virtual environment
