@@ -10,8 +10,8 @@
 [![ONNX](https://img.shields.io/badge/ONNX-005CED?style=for-the-badge&logo=onnx&logoColor=white)](https://onnx.ai/)
 [![Website](https://img.shields.io/badge/Website-Netlify-00C7B7?style=for-the-badge&logo=netlify)](https://font-identifier-ai.netlify.app/)
 
-**Creator:** Tapomoy Sarkar
-**Helper:** Srijit Mondal
+### **Creator:** Tapomoy Sarkar
+GPU Lender: Srijit Mondal
 
 > An ultra-scale Computer Vision pipeline designed to identify the exact typography used in any raw image or screenshot from a library of **185,700+ fonts**.
 
